@@ -24,11 +24,13 @@ class ifiSDK
     public $loggingEnabled = 0;
 
     private function sdk_debug_log($message, $data = null) {
-        if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('=== INFUSIONSOFT SDK DEBUG ===');
-            error_log("Message: $message");
-            if ($data) error_log('Data: ' . print_r($data, true));
-            error_log('================================');
+        if ($this->debug && defined('WP_DEBUG') && WP_DEBUG) {
+            $debug_info = json_encode([
+                'time' => date('Y-m-d H:i:s'),
+                'message' => $message,
+                'data' => $data
+            ]);
+            error_log("=== INFUSIONSOFT SDK DEBUG === " . $debug_info);
         }
     }
 
@@ -52,8 +54,28 @@ class ifiSDK
 
         // Get settings from WordPress options
         $options = get_option('iv_settings', []);
-        $this->key = !empty($key) ? $key : $options['api_key'];
         
+        $this->sdk_debug_log('Checking API settings', [
+            'options_found' => !empty($options),
+            'api_key_exists' => isset($options['api_key']),
+            'api_key_length' => isset($options['api_key']) ? strlen($options['api_key']) : 0,
+            'provided_key_length' => strlen($key)
+        ]);
+
+        // Set the key, prioritizing passed key over options
+        $this->key = !empty($key) ? $key : ($options['api_key'] ?? '');
+        
+        if (empty($this->key)) {
+            $this->sdk_debug_log('No API key found');
+            throw new ifiSDKException('No API key configured');
+        }
+
+        // Verify key format
+        if (!preg_match('/^KeapAK-/', $this->key)) {
+            $this->sdk_debug_log('Invalid API key format');
+            throw new ifiSDKException('Invalid API key format - must start with KeapAK-');
+        }
+
         $this->debug = (($key == 'on' || $key == 'off' || $key == 'kill' || $key == 'throw') ? $key : $dbOn);
 
         // Initialize the client with new endpoint

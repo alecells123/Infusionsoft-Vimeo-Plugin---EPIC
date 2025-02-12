@@ -31,18 +31,20 @@ add_action('wp_ajax_nopriv_vimeo_action', 'vimeo_action_callback');
 
 function vimeo_action_callback() {
 	global $i4w;
-	$INFUSIONSOFT_SUBDOMAIN = get_option('iv_subdomain');
-	$INFUSIONSFT_KEY = get_option('iv_key');
-	$result["tagged"] = 0;
+	
+	// Get settings
+	$options = get_option('iv_settings', []);
+	
+	if (empty($options['api_key'])) {
+		wp_send_json_error(['message' => 'API key not configured']);
+		return;
+	}
 
-	if($INFUSIONSOFT_SUBDOMAIN && $INFUSIONSFT_KEY) {
-		define('INFUSIONSOFT_SUBDOMAIN', $INFUSIONSOFT_SUBDOMAIN);
-		define('INFUSIONSFT_KEY', $INFUSIONSFT_KEY);
-
-		include(plugin_dir_path(__FILE__) . 'infusionsoft/src/ifisdk.php');	
+	try {
+		include(plugin_dir_path(__FILE__) . 'infusionsoft/src/ifisdk.php');    
 		$app = new ifiSDK;
-
-		if($app->cfgCon("connection")) {
+		
+		if($app->cfgCon("connection", $options['api_key'])) {
 			$videoid = $_POST['videoid'];
 			$percent = $_POST['percent'];
 			$contactid = $_POST['contactid'];
@@ -85,6 +87,9 @@ function vimeo_action_callback() {
 				}
 			}
 		}
+	} catch (Exception $e) {
+		wp_send_json_error(['message' => $e->getMessage()]);
+		return;
 	}
 	
 	echo json_encode($result);

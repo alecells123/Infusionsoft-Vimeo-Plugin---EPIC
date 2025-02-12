@@ -2,10 +2,12 @@
 // Debug helper for this file
 function cfg_debug_log($message, $data = null) {
     if (defined('WP_DEBUG') && WP_DEBUG) {
-        error_log('=== INFUSIONSOFT CONFIG DEBUG ===');
-        error_log("Message: $message");
-        if ($data) error_log('Data: ' . print_r($data, true));
-        error_log('================================');
+        $debug_info = json_encode([
+            'time' => date('Y-m-d H:i:s'),
+            'message' => $message,
+            'data' => $data
+        ]);
+        error_log("=== INFUSIONSOFT CONFIG === " . $debug_info);
     }
 }
 
