@@ -46,69 +46,71 @@ class ifiSDK
      */
     public function cfgCon($name, $key = "", $dbOn = "on")
     {
-        $this->sdk_debug_log('Starting API connection configuration', [
-            'name' => $name,
-            'key_provided' => !empty($key),
-            'debug_mode' => $dbOn
-        ]);
-
         // Get settings from WordPress options
         $options = get_option('iv_settings', []);
-        
-        $this->sdk_debug_log('Checking API settings', [
-            'options_found' => !empty($options),
-            'api_key_exists' => isset($options['api_key']),
-            'api_key_length' => isset($options['api_key']) ? strlen($options['api_key']) : 0,
-            'provided_key_length' => strlen($key)
-        ]);
-
-        // Set the key, prioritizing passed key over options
         $this->key = !empty($key) ? $key : ($options['api_key'] ?? '');
         
-        if (empty($this->key)) {
-            $this->sdk_debug_log('No API key found');
-            throw new ifiSDKException('No API key configured');
-        }
-
-        // Verify key format
-        if (!preg_match('/^KeapAK-/', $this->key)) {
-            $this->sdk_debug_log('Invalid API key format');
-            throw new ifiSDKException('Invalid API key format - must start with KeapAK-');
-        }
-
-        $this->debug = (($key == 'on' || $key == 'off' || $key == 'kill' || $key == 'throw') ? $key : $dbOn);
-
-        // Initialize the client with new endpoint
-        $this->client = new xmlrpc_client("https://api.infusionsoft.com/crm/xmlrpc");
-        
-        /* Return Raw PHP Types */
-        $this->client->return_type = "phpvals";
-
-        /* SSL Certificate Verification */
-        $this->client->setSSLVerifyPeer(TRUE);
-        $this->client->setCaCertificate((__DIR__ != '__DIR__' ? __DIR__ : dirname(__FILE__)) . '/infusionsoft.pem');
-
-        // Debug the authorization header
-        $this->sdk_debug_log('Setting authorization header', [
-            'key_length' => strlen($this->key),
-            'header' => 'Bearer ' . substr($this->key, 0, 10) . '...'
+        $this->sdk_debug_log('Starting connection', [
+            'key_length' => strlen($this->key)
         ]);
 
-        // Add Authorization header
-        if (!isset($this->client->headers)) {
-            $this->client->headers = array();
-        }
-        $this->client->headers['Authorization'] = 'Bearer ' . $this->key;
+        // Prepare XML request
+        $xml_request = '<?xml version="1.0"?>
+        <methodCall>
+          <methodName>DataService.getAppSetting</methodName>
+          <params>
+            <param>
+              <value>Application</value>
+            </param>
+            <param>
+              <value>enabled</value>
+            </param>
+          </params>
+        </methodCall>';
 
-        try {
-            $connected = $this->dsGetSetting("Application", "enabled");
-            if (strpos($connected, 'ERROR') !== FALSE) {
-                throw new ifiSDKException($connected);
-            }
-        } catch (ifiSDKException $e) {
-            throw new ifiSDKException($e->getMessage());
+        // Initialize cURL
+        $curl = curl_init();
+        
+        curl_setopt_array($curl, array(
+            CURLOPT_URL => 'https://api.infusionsoft.com/crm/xmlrpc',
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_ENCODING => '',
+            CURLOPT_MAXREDIRS => 10,
+            CURLOPT_TIMEOUT => 0,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+            CURLOPT_CUSTOMREQUEST => 'POST',
+            CURLOPT_POSTFIELDS => $xml_request,
+            CURLOPT_HTTPHEADER => array(
+                'Authorization: Bearer ' . $this->key,
+                'Content-Type: text/xml'
+            )
+        ));
+
+        $this->sdk_debug_log('Making request', [
+            'url' => 'https://api.infusionsoft.com/crm/xmlrpc',
+            'headers' => [
+                'Authorization' => 'Bearer ' . substr($this->key, 0, 10) . '...',
+                'Content-Type' => 'text/xml'
+            ]
+        ]);
+
+        // Execute request
+        $response = curl_exec($curl);
+        $http_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        
+        $this->sdk_debug_log('Response received', [
+            'http_code' => $http_code,
+            'response_length' => strlen($response)
+        ]);
+
+        if ($http_code !== 200) {
+            $error = curl_error($curl);
+            curl_close($curl);
+            throw new ifiSDKException("API request failed: HTTP $http_code - $error");
         }
 
+        curl_close($curl);
         return true;
     }
 
