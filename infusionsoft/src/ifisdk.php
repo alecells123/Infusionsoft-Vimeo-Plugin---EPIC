@@ -73,45 +73,28 @@ class ifiSDK
             ]);
         }
 
-        // New endpoint URL
+        // Initialize the client with new endpoint
         $this->client = new xmlrpc_client("https://api.infusionsoft.com/crm/xmlrpc");
-        $this->sdk_debug_log('Initialized XML-RPC client with new endpoint');
-
+        
         /* Return Raw PHP Types */
         $this->client->return_type = "phpvals";
 
         /* SSL Certificate Verification */
         $this->client->setSSLVerifyPeer(TRUE);
-        $certPath = (__DIR__ != '__DIR__' ? __DIR__ : dirname(__FILE__)) . '/infusionsoft.pem';
-        $this->client->setCaCertificate($certPath);
-        $this->sdk_debug_log('SSL configuration set', [
-            'cert_path' => $certPath,
-            'cert_exists' => file_exists($certPath)
-        ]);
+        $this->client->setCaCertificate((__DIR__ != '__DIR__' ? __DIR__ : dirname(__FILE__)) . '/infusionsoft.pem');
 
-        // Add Authorization header with SAK
-        $this->client->setHeader('Authorization', 'Bearer ' . $this->key);
-        $this->sdk_debug_log('Added Bearer token authentication header');
+        // Add Authorization header using the client's headers property
+        if (!isset($this->client->headers)) {
+            $this->client->headers = array();
+        }
+        $this->client->headers['Authorization'] = 'Bearer ' . $this->key;
 
-        /* Connection verification */
         try {
-            $this->sdk_debug_log('Testing connection');
             $connected = $this->dsGetSetting("Application", "enabled");
-
             if (strpos($connected, 'ERROR') !== FALSE) {
-                $this->sdk_debug_log('Connection test failed', [
-                    'error' => $connected
-                ]);
                 throw new ifiSDKException($connected);
             }
-
-            $this->sdk_debug_log('Connection test successful');
-
         } catch (ifiSDKException $e) {
-            $this->sdk_debug_log('Connection exception', [
-                'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
             throw new ifiSDKException($e->getMessage());
         }
 
