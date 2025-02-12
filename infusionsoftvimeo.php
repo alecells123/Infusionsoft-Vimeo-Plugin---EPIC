@@ -236,21 +236,7 @@ function iv_settings_section_callback() {
     echo 'Configure your Keap/Infusionsoft API settings';
 }
 
-function iv_subdomain_render() {
-    $options = get_option('iv_settings');
-    $subdomain = isset($options['subdomain']) ? $options['subdomain'] : 'lc299';
-    ?>
-    <input type='text' name='iv_settings[subdomain]' value='<?php echo esc_attr($subdomain); ?>'>
-    <?php
-}
 
-function iv_api_key_render() {
-    $options = get_option('iv_settings');
-    $api_key = isset($options['api_key']) ? $options['api_key'] : 'KeapAK-a71db0d082bfb2f08503622b08592b3043342a7e28c6aee37c';
-    ?>
-    <input type='text' size='50' name='iv_settings[api_key]' value='<?php echo esc_attr($api_key); ?>'>
-    <?php
-}
 
 // Add test connection button handler
 add_action('wp_ajax_test_infusionsoft_connection', 'test_infusionsoft_connection_callback');
@@ -332,5 +318,19 @@ function iv_options_page() {
         });
         </script>
     </div>
+    <?php
+}function iv_subdomain_render() {
+    $options = get_option('iv_settings');
+    $subdomain = isset($options['subdomain']) ? $options['subdomain'] : 'lc299';
+    ?>
+    <input type='text' name='iv_settings[subdomain]' value='<?php echo esc_attr($subdomain); ?>'>
+    <?php
+}
+
+function iv_api_key_render() {
+    $options = get_option('iv_settings');
+    $api_key = isset($options['api_key']) ? $options['api_key'] : 'KeapAK-a71db0d082bfb2f08503622b08592b3043342a7e28c6aee37c';
+    ?>
+    <input type='text' size='50' name='iv_settings[api_key]' value='<?php echo esc_attr($api_key); ?>'>
     <?php
 }
