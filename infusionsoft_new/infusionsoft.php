@@ -1,11 +1,11 @@
 <?php
 /*
-Plugin Name: 	Infusionsoft Developers Plugin
-Plugin URI: 	http://wordpress.org/plugins/infusionsoft-for-developers/
-Description: 	This plugin is primarily designed for developers adding Infusionsoft API hooks for use in WP. It only provides a basic feature set for the average WordPress user.
-Version: 		0.3
-Author: 		Infusionsoft
-Author URI: 	http://infusionsoft.com
+Plugin Name: Infusionsoft Developers Plugin
+Plugin URI: http://wordpress.org/plugins/infusionsoft-for-developers/
+Description: This plugin is primarily designed for developers adding Infusionsoft API hooks for use in WP. It only provides a basic feature set for the average WordPress user.
+Version: 0.2
+Author: Infusionsoft
+Author URI: http://infusionsoft.com
 License: 		GPLv2 or later
 License URI: 	http://www.gnu.org/licenses/gpl-2.0.html
 

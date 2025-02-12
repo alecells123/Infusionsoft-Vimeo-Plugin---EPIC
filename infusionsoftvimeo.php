@@ -4,7 +4,7 @@ Plugin Name: Infusionsoft Vimeo
 Plugin URI: http://wordpress.org/
 Description: For tracking vimeo video process in infusionsoft.
 Author: Wordpress, altered for Service Access Key use by Alec Ellsworth
-Version: 1.0
+Version: 1.1
 Author URI: http://wordpress.org/
 */
 
