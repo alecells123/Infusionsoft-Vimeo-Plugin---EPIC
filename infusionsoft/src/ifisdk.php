@@ -207,41 +207,56 @@ class ifiSDK
             'params' => $callArray
         ]);
 
-        /* Set up the call */
-        $call = new xmlrpcmsg($service, $callArray);
-
-        /* Send the call */
-        $now = time();
-        $start = microtime();
+        // Build XML-RPC request
+        $xml_request = '<?xml version="1.0"?>
+        <methodCall>
+          <methodName>' . $service . '</methodName>
+          <params>';
         
-        $this->sdk_debug_log('Sending request');
-        $result = $this->client->send($call);
-        $stop = microtime();
-
-        /* Check the returned value */
-        if (!$result->faultCode()) {
-            $this->sdk_debug_log('API call successful', [
-                'service' => $service,
-                'duration' => $stop - $start,
-                'response_size' => strlen(serialize($result->value()))
-            ]);
-            return $result->value();
-        } else {
-            $this->sdk_debug_log('API call failed', [
-                'service' => $service,
-                'fault_code' => $result->faultCode(),
-                'fault_string' => $result->faultString(),
-                'duration' => $stop - $start
-            ]);
-
-            if ($this->debug == "kill") {
-                die("ERROR: " . $result->faultCode() . " - " . $result->faultString());
-            } elseif ($this->debug == "on") {
-                return "ERROR: " . $result->faultCode() . " - " . $result->faultString();
-            } elseif ($this->debug == "throw") {
-                throw new ifiSDKException($result->faultString(), $result->faultCode());
-            }
+        foreach ($callArray as $arg) {
+            $xml_request .= '
+            <param>
+              <value>' . htmlspecialchars($arg) . '</value>
+            </param>';
         }
+        
+        $xml_request .= '
+          </params>
+        </methodCall>';
+
+        // Initialize cURL
+        $curl = curl_init();
+        
+        curl_setopt_array($curl, array(
+            CURLOPT_URL => 'https://api.infusionsoft.com/crm/xmlrpc',
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_ENCODING => '',
+            CURLOPT_MAXREDIRS => 10,
+            CURLOPT_TIMEOUT => 0,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+            CURLOPT_CUSTOMREQUEST => 'POST',
+            CURLOPT_POSTFIELDS => $xml_request,
+            CURLOPT_HTTPHEADER => array(
+                'Authorization: Bearer ' . $this->key,
+                'Content-Type: text/xml'
+            )
+        ));
+
+        $response = curl_exec($curl);
+        $http_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+
+        if ($http_code !== 200) {
+            $error = curl_error($curl);
+            curl_close($curl);
+            throw new ifiSDKException("API request failed: HTTP $http_code - $error");
+        }
+
+        curl_close($curl);
+        
+        // Parse XML response
+        $xml = simplexml_load_string($response);
+        return isset($xml->params->param->value) ? (string)$xml->params->param->value : false;
     }
 
     /**
