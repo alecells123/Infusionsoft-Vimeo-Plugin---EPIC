@@ -3,8 +3,8 @@
 Plugin Name: Infusionsoft Vimeo for EPIC Entertainment
 Plugin URI: http://wordpress.org/
 Description: For tracking vimeo video process in infusionsoft.
-Author: Wordpress; updated by Alec Ellsworth
 Version: 1.1
+Author: Wordpress; updated by Alec Ellsworth
 Author URI: http://wordpress.org/
 */
 
