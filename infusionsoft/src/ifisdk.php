@@ -50,28 +50,11 @@ class ifiSDK
             'debug_mode' => $dbOn
         ]);
 
+        // Get settings from WordPress options
+        $options = get_option('iv_settings', []);
+        $this->key = !empty($key) ? $key : $options['api_key'];
+        
         $this->debug = (($key == 'on' || $key == 'off' || $key == 'kill' || $key == 'throw') ? $key : $dbOn);
-
-        // Key handling
-        if ($key != "" && $key != "on" && $key != "off" && $key != 'kill' && $key != 'throw') {
-            $this->key = $key;
-            $this->sdk_debug_log('Using provided API key', [
-                'key_length' => strlen($key)
-            ]);
-        } else {
-            $this->sdk_debug_log('Loading API key from config file');
-            include('conn.cfg.php');
-            $appLines = $connInfo;
-            foreach ($appLines as $appLine) {
-                $details[substr($appLine, 0, strpos($appLine, ":"))] = explode(":", $appLine);
-            }
-            $appname = $details[$name][1];
-            $this->key = $details[$name][3];
-            $this->sdk_debug_log('Loaded key from config', [
-                'appname' => $appname,
-                'key_length' => strlen($this->key)
-            ]);
-        }
 
         // Initialize the client with new endpoint
         $this->client = new xmlrpc_client("https://api.infusionsoft.com/crm/xmlrpc");
@@ -83,7 +66,13 @@ class ifiSDK
         $this->client->setSSLVerifyPeer(TRUE);
         $this->client->setCaCertificate((__DIR__ != '__DIR__' ? __DIR__ : dirname(__FILE__)) . '/infusionsoft.pem');
 
-        // Add Authorization header using the client's headers property
+        // Debug the authorization header
+        $this->sdk_debug_log('Setting authorization header', [
+            'key_length' => strlen($this->key),
+            'header' => 'Bearer ' . substr($this->key, 0, 10) . '...'
+        ]);
+
+        // Add Authorization header
         if (!isset($this->client->headers)) {
             $this->client->headers = array();
         }
