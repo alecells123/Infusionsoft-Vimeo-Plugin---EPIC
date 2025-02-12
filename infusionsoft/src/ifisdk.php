@@ -23,6 +23,15 @@ class ifiSDK
     public $logname = '';
     public $loggingEnabled = 0;
 
+    private function sdk_debug_log($message, $data = null) {
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('=== INFUSIONSOFT SDK DEBUG ===');
+            error_log("Message: $message");
+            if ($data) error_log('Data: ' . print_r($data, true));
+            error_log('================================');
+        }
+    }
+
     /**
      * @method cfgCon
      * @description Creates and tests the API Connection to the Application
@@ -35,11 +44,22 @@ class ifiSDK
      */
     public function cfgCon($name, $key = "", $dbOn = "on")
     {
+        $this->sdk_debug_log('Starting API connection configuration', [
+            'name' => $name,
+            'key_provided' => !empty($key),
+            'debug_mode' => $dbOn
+        ]);
+
         $this->debug = (($key == 'on' || $key == 'off' || $key == 'kill' || $key == 'throw') ? $key : $dbOn);
 
+        // Key handling
         if ($key != "" && $key != "on" && $key != "off" && $key != 'kill' && $key != 'throw') {
             $this->key = $key;
+            $this->sdk_debug_log('Using provided API key', [
+                'key_length' => strlen($key)
+            ]);
         } else {
+            $this->sdk_debug_log('Loading API key from config file');
             include('conn.cfg.php');
             $appLines = $connInfo;
             foreach ($appLines as $appLine) {
@@ -47,34 +67,51 @@ class ifiSDK
             }
             $appname = $details[$name][1];
             $this->key = $details[$name][3];
+            $this->sdk_debug_log('Loaded key from config', [
+                'appname' => $appname,
+                'key_length' => strlen($this->key)
+            ]);
         }
 
-        if (!isset($appname)) {
-            $appname = $name;
-        }
-
-        $this->client = new xmlrpc_client("https://$appname.infusionsoft.com/api/xmlrpc");
+        // New endpoint URL
+        $this->client = new xmlrpc_client("https://api.infusionsoft.com/crm/xmlrpc");
+        $this->sdk_debug_log('Initialized XML-RPC client with new endpoint');
 
         /* Return Raw PHP Types */
         $this->client->return_type = "phpvals";
 
         /* SSL Certificate Verification */
         $this->client->setSSLVerifyPeer(TRUE);
-        $this->client->setCaCertificate((__DIR__ != '__DIR__' ? __DIR__ : dirname(__FILE__)) . '/infusionsoft.pem');
-        //$this->client->setDebug(2);
+        $certPath = (__DIR__ != '__DIR__' ? __DIR__ : dirname(__FILE__)) . '/infusionsoft.pem';
+        $this->client->setCaCertificate($certPath);
+        $this->sdk_debug_log('SSL configuration set', [
+            'cert_path' => $certPath,
+            'cert_exists' => file_exists($certPath)
+        ]);
 
-        $this->encKey = php_xmlrpc_encode($this->key);
+        // Add Authorization header with SAK
+        $this->client->setHeader('Authorization', 'Bearer ' . $this->key);
+        $this->sdk_debug_log('Added Bearer token authentication header');
 
         /* Connection verification */
-
         try {
+            $this->sdk_debug_log('Testing connection');
             $connected = $this->dsGetSetting("Application", "enabled");
 
             if (strpos($connected, 'ERROR') !== FALSE) {
+                $this->sdk_debug_log('Connection test failed', [
+                    'error' => $connected
+                ]);
                 throw new ifiSDKException($connected);
             }
 
+            $this->sdk_debug_log('Connection test successful');
+
         } catch (ifiSDKException $e) {
+            $this->sdk_debug_log('Connection exception', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
             throw new ifiSDKException($e->getMessage());
         }
 
@@ -169,42 +206,46 @@ class ifiSDK
      */
     public function methodCaller($service, $callArray)
     {
+        $this->sdk_debug_log('Making API call', [
+            'service' => $service,
+            'params' => $callArray
+        ]);
+
         /* Set up the call */
         $call = new xmlrpcmsg($service, $callArray);
-
-        if ($service != 'DataService.getTemporaryKey') {
-            array_unshift($call->params, $this->encKey);
-        }
 
         /* Send the call */
         $now = time();
         $start = microtime();
+        
+        $this->sdk_debug_log('Sending request');
         $result = $this->client->send($call);
-
         $stop = microtime();
-        /* Check the returned value to see if it was successful and return it */
+
+        /* Check the returned value */
         if (!$result->faultCode()) {
-            if ($this->loggingEnabled == 1) {
-                $this->log(array('Method' => $service, 'Call' => $callArray, 'Start' => $start, 'Stop' => $stop, 'Now' => $now, 'Result' => $result, 'Error' => 'No', 'ErrorCode' => 'No Error Code Received'));
-            }
+            $this->sdk_debug_log('API call successful', [
+                'service' => $service,
+                'duration' => $stop - $start,
+                'response_size' => strlen(serialize($result->value()))
+            ]);
             return $result->value();
         } else {
-            if ($this->loggingEnabled == 1) {
-                $this->log(array('Method' => $service, 'Call' => $callArray, 'Start' => $start, 'Stop' => $stop, 'Now' => $now, 'Result' => $result, 'Error' => 'Yes', 'ErrorCode' => "ERROR: " . $result->faultCode() . " - " . $result->faultString()));
-            }
+            $this->sdk_debug_log('API call failed', [
+                'service' => $service,
+                'fault_code' => $result->faultCode(),
+                'fault_string' => $result->faultString(),
+                'duration' => $stop - $start
+            ]);
+
             if ($this->debug == "kill") {
-                die("ERROR: " . $result->faultCode() . " - " .
-                    $result->faultString());
+                die("ERROR: " . $result->faultCode() . " - " . $result->faultString());
             } elseif ($this->debug == "on") {
-                return "ERROR: " . $result->faultCode() . " - " .
-                $result->faultString();
+                return "ERROR: " . $result->faultCode() . " - " . $result->faultString();
             } elseif ($this->debug == "throw") {
                 throw new ifiSDKException($result->faultString(), $result->faultCode());
-            } elseif ($this->debug == "off") {
-                //ignore!
             }
         }
-
     }
 
     /**
