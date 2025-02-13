@@ -138,35 +138,42 @@ jQuery(function($){
 					};
 					   
 					jQuery.post(vimeo_ajax_object.ajax_url, data, function(response) {
+						// Ensure we have a valid response object
+						if (!response) {
+							console.log('Empty response received');
+							return;
+						}
+
 						// Parse response if it's a string
 						if (typeof response === 'string') {
 							try {
 								response = JSON.parse(response);
 							} catch (e) {
-								console.log('Error parsing response:', e);
+								console.log('Failed to parse response:', e);
 								return;
 							}
 						}
 
-						// Safely check for tagged property
-						if (response && response.tagged) {
+						// Only proceed if we have the expected properties
+						if (response && typeof response.tagged !== 'undefined') {
 							console.log('Got this from the server: ' + response.tagged);
-							console.log('Video ID: ' + vimeovideoid);
 							
-							var vidtags = document.cookie.replace(/(?:(?:^|.*;\s*)contactTags\s*\=\s*([^;]*).*$)|^.*$/, "$1");
-							if (vidtags) {
-								if (vidtags.indexOf(response.tagid) == -1) {
-									document.cookie = "contactTags=" + vidtags + ',' + response.tagid;
+							if (response.tagged === true) {  // Explicit check for true
+								var vidtags = document.cookie.replace(/(?:(?:^|.*;\s*)contactTags\s*\=\s*([^;]*).*$)|^.*$/, "$1");
+								if (vidtags && response.tagid) {
+									if (vidtags.indexOf(response.tagid) === -1) {
+										document.cookie = "contactTags=" + vidtags + ',' + response.tagid;
+									}
+								} else if (response.tagid) {
+									document.cookie = "contactTags=" + response.tagid;
 								}
-							} else {
-								document.cookie = "contactTags=" + response.tagid;
-							}
-							
-							if ($(iframe).parents('.videoWrapper').hasClass('red-border')) {
-								$(iframe).parents('.videoWrapper').removeClass('red-border').addClass('green-border played');
-							}
-							if ($(iframe).parents('.tab-pane').find('.vid-text').hasClass('vid-red')) {
-								$(iframe).parents('.tab-pane').find('.vid-text').removeClass('vid-red').addClass('vid-green').html('(You Have Completed this Video)');
+
+								if ($(iframe).parents('.videoWrapper').hasClass('red-border')) {
+									$(iframe).parents('.videoWrapper').removeClass('red-border').addClass('green-border played');
+								}
+								if ($(iframe).parents('.tab-pane').find('.vid-text').hasClass('vid-red')) {
+									$(iframe).parents('.tab-pane').find('.vid-text').removeClass('vid-red').addClass('vid-green').html('(You Have Completed this Video)');
+								}
 							}
 						} else {
 							console.log('Invalid response structure:', response);
