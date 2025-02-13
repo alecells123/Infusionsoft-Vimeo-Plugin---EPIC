@@ -2,24 +2,16 @@
 /**
  * @method Object Oriented PHP SDK for Infusionsoft
  * @CreatedBy Justin Morris on 09-10-08
- * @UpdatedBy Michael Fairchild
- * @Updated 01/14/2014
- * @ifiSDKVersion 1.8.6
- * @ApplicationVersion 1.29.9
+ * @UpdatedBy Michael Fairchild, Alec Ellsworth
+ * @Updated 02/12/2024
+ * @ifiSDKVersion 1.8.7
  */
 
-if (!function_exists('xmlrpc_encode_entitites')) {
-    include("xmlrpc-3.0/lib/xmlrpc.inc");
-}
+class ifiSDKException extends Exception {}
 
-class ifiSDKException extends Exception
-{
-}
-
-class ifiSDK
-{
-
-    static private $handle;
+class ifiSDK {
+    private $key;
+    private $debug;
     public $logname = '';
     public $loggingEnabled = 0;
 
@@ -29,153 +21,166 @@ class ifiSDK
                 'time' => date('Y-m-d H:i:s'),
                 'message' => $message,
                 'data' => $data
-            ]);
+            ], JSON_PRETTY_PRINT);
             error_log("=== INFUSIONSOFT SDK DEBUG === " . $debug_info);
+        }
+    }
+
+    private function makeApiCall($service, $params = []) {
+        $this->sdk_debug_log('Making API call', [
+            'service' => $service,
+            'params' => $params
+        ]);
+
+        try {
+            $curl = curl_init();
+            
+            // Build XML request
+            $xml_request = '<?xml version="1.0"?>
+            <methodCall>
+              <methodName>' . $service . '</methodName>
+              <params>';
+            
+            foreach ($params as $param) {
+                $xml_request .= '
+                <param>
+                  <value>' . htmlspecialchars($param) . '</value>
+                </param>';
+            }
+            
+            $xml_request .= '
+              </params>
+            </methodCall>';
+
+            $this->sdk_debug_log('Request XML', ['xml' => $xml_request]);
+
+            curl_setopt_array($curl, array(
+                CURLOPT_URL => 'https://api.infusionsoft.com/crm/xmlrpc',
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_ENCODING => '',
+                CURLOPT_MAXREDIRS => 10,
+                CURLOPT_TIMEOUT => 30, // Added timeout
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+                CURLOPT_CUSTOMREQUEST => 'POST',
+                CURLOPT_POSTFIELDS => $xml_request,
+                CURLOPT_HTTPHEADER => array(
+                    'Authorization: Bearer ' . $this->key,
+                    'Content-Type: text/xml'
+                )
+            ));
+
+            $response = curl_exec($curl);
+            $http_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+            $curl_error = curl_error($curl);
+            $curl_errno = curl_errno($curl);
+
+            $this->sdk_debug_log('API Response', [
+                'http_code' => $http_code,
+                'response' => $response,
+                'curl_error' => $curl_error,
+                'curl_errno' => $curl_errno
+            ]);
+
+            if ($curl_errno) {
+                throw new ifiSDKException("cURL Error ($curl_errno): $curl_error");
+            }
+
+            if ($http_code !== 200) {
+                throw new ifiSDKException("API request failed: HTTP $http_code - Response: $response");
+            }
+
+            if (!$response) {
+                throw new ifiSDKException("Empty response from API");
+            }
+
+            // Parse XML response
+            $xml = @simplexml_load_string($response);
+            if ($xml === false) {
+                $this->sdk_debug_log('XML Parse Error', [
+                    'errors' => libxml_get_errors(),
+                    'raw_response' => $response
+                ]);
+                throw new ifiSDKException("Failed to parse XML response");
+            }
+
+            if (!isset($xml->params->param->value)) {
+                throw new ifiSDKException("Invalid response format");
+            }
+
+            return (string)$xml->params->param->value;
+
+        } catch (Exception $e) {
+            $this->sdk_debug_log('Error in makeApiCall', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw new ifiSDKException("API Error: " . $e->getMessage());
+        } finally {
+            if (isset($curl) && is_resource($curl)) {
+                curl_close($curl);
+            }
         }
     }
 
     /**
      * @method cfgCon
-     * @description Creates and tests the API Connection to the Application
-     * @param $name - Application Name
-     * @param string $key - API Key
-     * @param string $dbOn - Error Handling On
-     * @param string $type - Infusionsoft or Mortgage Pro
+     * @description Creates and tests the API Connection
+     * @param string $name - Application Name
+     * @param string $key - OAuth Bearer Token
+     * @param string $dbOn - Debug Mode
      * @return bool
      * @throws ifiSDKException
      */
-    public function cfgCon($name, $key = "", $dbOn = "on")
-    {
+    public function cfgCon($name, $key = "", $dbOn = "on") {
         // Get settings from WordPress options
         $options = get_option('iv_settings', []);
         $this->key = !empty($key) ? $key : ($options['api_key'] ?? '');
+        $this->debug = $dbOn;
         
         $this->sdk_debug_log('Starting connection', [
             'key_length' => strlen($this->key)
         ]);
 
-        // Prepare XML request
-        $xml_request = '<?xml version="1.0"?>
-        <methodCall>
-          <methodName>DataService.getAppSetting</methodName>
-          <params>
-            <param>
-              <value>Application</value>
-            </param>
-            <param>
-              <value>enabled</value>
-            </param>
-          </params>
-        </methodCall>';
-
-        // Initialize cURL
-        $curl = curl_init();
-        
-        curl_setopt_array($curl, array(
-            CURLOPT_URL => 'https://api.infusionsoft.com/crm/xmlrpc',
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_ENCODING => '',
-            CURLOPT_MAXREDIRS => 10,
-            CURLOPT_TIMEOUT => 0,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-            CURLOPT_CUSTOMREQUEST => 'POST',
-            CURLOPT_POSTFIELDS => $xml_request,
-            CURLOPT_HTTPHEADER => array(
-                'Authorization: Bearer ' . $this->key,
-                'Content-Type: text/xml'
-            )
-        ));
-
-        $this->sdk_debug_log('Making request', [
-            'url' => 'https://api.infusionsoft.com/crm/xmlrpc',
-            'headers' => [
-                'Authorization' => 'Bearer ' . substr($this->key, 0, 10) . '...',
-                'Content-Type' => 'text/xml'
-            ]
-        ]);
-
-        // Execute request
-        $response = curl_exec($curl);
-        $http_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
-        
-        $this->sdk_debug_log('Response received', [
-            'http_code' => $http_code,
-            'response_length' => strlen($response)
-        ]);
-
-        if ($http_code !== 200) {
-            $error = curl_error($curl);
-            curl_close($curl);
-            throw new ifiSDKException("API request failed: HTTP $http_code - $error");
+        try {
+            // Test the connection using makeApiCall
+            return $this->makeApiCall("DataService.getAppSetting", ["Application", "enabled"]);
+        } catch (Exception $e) {
+            throw new ifiSDKException("Connection Failed: " . $e->getMessage());
         }
-
-        curl_close($curl);
-        return true;
     }
 
     /**
-     * @method getTemporaryKey
-     * @description Connect and Obtain an API key from a vendor key
+     * @method vendorCon
+     * @description Connect using OAuth Bearer token
      * @param string $name - Application Name
-     * @param string $user - Username
-     * @param string $pass - Password
-     * @param string $key - Vendor Key
-     * @param string $dbOn - Error Handling On
+     * @param string $key - OAuth Bearer Token
+     * @param string $dbOn - Debug Mode
      * @return bool
      * @throws ifiSDKException
      */
-    public function vendorCon($name, $user, $pass, $key = "", $dbOn = "on")
-    {
-        $this->debug = (($key == 'on' || $key == 'off' || $key == 'kill' || $key == 'throw') ? $key : $dbOn);
-
-        if ($key != "" && $key != "on" && $key != "off" && $key != 'kill' && $key != 'throw') {
-            $this->client = new xmlrpc_client("https://$name.infusionsoft.com/api/xmlrpc");
-            $this->key = $key;
+    public function vendorCon($name, $key = "", $dbOn = "on") {
+        $this->debug = $dbOn;
+        
+        // Get settings from WordPress options if no key provided
+        if (empty($key)) {
+            $options = get_option('iv_settings', []);
+            $this->key = $options['api_key'] ?? '';
         } else {
-            include('conn.cfg.php');
-            $appLines = $connInfo;
-            foreach ($appLines as $appLine) {
-                $details[substr($appLine, 0, strpos($appLine, ":"))] = explode(":", $appLine);
-            }
-            if (!empty($details[$name])) {
-                if ($details[$name][2] == "i") {
-                    $this->client = new xmlrpc_client("https://" . $details[$name][1] .
-                        ".infusionsoft.com/api/xmlrpc");
-                } elseif ($details[$name][2] == "m") {
-                    $this->client = new xmlrpc_client("https://" . $details[$name][1] .
-                        ".mortgageprocrm.com/api/xmlrpc");
-                } else {
-                    throw new ifiSDKException("Invalid application name: \"" . $name . "\"");
-                }
-            } else {
-                throw new ifiSDKException("Application Does Not Exist: \"" . $name . "\"");
-            }
-            $this->key = $details[$name][3];
+            $this->key = $key;
         }
 
-        /* Return Raw PHP Types */
-        $this->client->return_type = "phpvals";
-
-        /* SSL Certificate Verification */
-        $this->client->setSSLVerifyPeer(TRUE);
-        $this->client->setCaCertificate((__DIR__ != '__DIR__' ? __DIR__ : dirname(__FILE__)) . '/infusionsoft.pem');
-
-        $carray = array(
-            php_xmlrpc_encode($this->key),
-            php_xmlrpc_encode($user),
-            php_xmlrpc_encode(md5($pass)));
-
-        $this->key = $this->methodCaller("DataService.getTemporaryKey", $carray);
-
-        $this->encKey = php_xmlrpc_encode($this->key);
+        if (empty($this->key)) {
+            throw new ifiSDKException("No API token provided");
+        }
 
         try {
-            $connected = $this->dsGetSetting("Application", "enabled");
-        } catch (ifiSDKException $e) {
-            throw new ifiSDKException("Connection Failed");
+            // Test the connection
+            $connected = $this->makeApiCall("DataService.getAppSetting", ["Application", "enabled"]);
+            return true;
+        } catch (Exception $e) {
+            throw new ifiSDKException("Connection Failed: " . $e->getMessage());
         }
-        return TRUE;
     }
 
     /**
@@ -186,77 +191,7 @@ class ifiSDK
      */
     public function appEcho($txt)
     {
-        $carray = array(
-            php_xmlrpc_encode($txt));
-
-        return $this->methodCaller("DataService.echo", $carray);
-    }
-
-    /**
-     * @method Method Caller
-     * @description Builds XML and Sends the Call
-     * @param string $service
-     * @param array $callArray
-     * @return int|mixed|string
-     * @throws ifiSDKException
-     */
-    public function methodCaller($service, $callArray)
-    {
-        $this->sdk_debug_log('Making API call', [
-            'service' => $service,
-            'params' => $callArray
-        ]);
-
-        // Build XML-RPC request
-        $xml_request = '<?xml version="1.0"?>
-        <methodCall>
-          <methodName>' . $service . '</methodName>
-          <params>';
-        
-        foreach ($callArray as $arg) {
-            $xml_request .= '
-            <param>
-              <value>' . htmlspecialchars($arg) . '</value>
-            </param>';
-        }
-        
-        $xml_request .= '
-          </params>
-        </methodCall>';
-
-        // Initialize cURL
-        $curl = curl_init();
-        
-        curl_setopt_array($curl, array(
-            CURLOPT_URL => 'https://api.infusionsoft.com/crm/xmlrpc',
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_ENCODING => '',
-            CURLOPT_MAXREDIRS => 10,
-            CURLOPT_TIMEOUT => 0,
-            CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-            CURLOPT_CUSTOMREQUEST => 'POST',
-            CURLOPT_POSTFIELDS => $xml_request,
-            CURLOPT_HTTPHEADER => array(
-                'Authorization: Bearer ' . $this->key,
-                'Content-Type: text/xml'
-            )
-        ));
-
-        $response = curl_exec($curl);
-        $http_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
-
-        if ($http_code !== 200) {
-            $error = curl_error($curl);
-            curl_close($curl);
-            throw new ifiSDKException("API request failed: HTTP $http_code - $error");
-        }
-
-        curl_close($curl);
-        
-        // Parse XML response
-        $xml = simplexml_load_string($response);
-        return isset($xml->params->param->value) ? (string)$xml->params->param->value : false;
+        return $this->makeApiCall("DataService.echo", [$txt]);
     }
 
     /**
@@ -265,28 +200,20 @@ class ifiSDK
 
     /**
      * @method getAffiliatesByProgram
-     * @description Gets a list of all of the affiliates with their contact data for the specified program.  This includes all of the custom fields defined for the contact and affiliate records that are retrieved.
-     * @param int $programId
-     * @return array
+     * @description Gets affiliates for a program
      */
     public function getAffiliatesByProgram($programId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$programId));
-        return $this->methodCaller("AffiliateProgramService.getAffiliatesByProgram", $carray);
+        return $this->makeApiCall("AffiliateProgramService.getAffiliatesByProgram", [(int)$programId]);
     }
 
     /**
      * @method getProgramsForAffiliate
-     * @description Gets a list of all of the Affiliate Programs for the Affiliate specified.
-     * @param int $affiliateId
-     * @return array
+     * @description Gets programs for an affiliate
      */
     public function getProgramsForAffiliate($affiliateId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$affiliateId));
-        return $this->methodCaller("AffiliateProgramService.getProgramsForAffiliate", $carray);
+        return $this->makeApiCall("AffiliateProgramService.getProgramsForAffiliate", [(int)$affiliateId]);
     }
 
     /**
@@ -296,8 +223,7 @@ class ifiSDK
      */
     public function getAffiliatePrograms()
     {
-        $carray = array();
-        return $this->methodCaller("AffiliateProgramService.getAffiliatePrograms", $carray);
+        return $this->makeApiCall("AffiliateProgramService.getAffiliatePrograms", []);
     }
 
     /**
@@ -308,9 +234,7 @@ class ifiSDK
      */
     public function getResourcesForAffiliateProgram($programId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$programId));
-        return $this->methodCaller("AffiliateProgramService.getResourcesForAffiliateProgram", $carray);
+        return $this->makeApiCall("AffiliateProgramService.getResourcesForAffiliateProgram", [(int)$programId]);
     }
 
     /**
@@ -320,383 +244,183 @@ class ifiSDK
     /**
      * @method affClawbacks
      * @description returns all clawbacks in a date range
-     * @param int $affId
-     * @param date $startDate
-     * @param date $endDate
-     * @return array
      */
-    public function affClawbacks($affId, $startDate, $endDate)
+    public function affClawbacks($affiliateId, $startDate, $endDate)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$affId),
-            php_xmlrpc_encode($startDate, array('auto_dates')),
-            php_xmlrpc_encode($endDate, array('auto_dates')));
-        return $this->methodCaller("APIAffiliateService.affClawbacks", $carray);
+        return $this->makeApiCall("APIAffiliateService.affClawbacks", [
+            (int)$affiliateId,
+            $startDate,
+            $endDate
+        ]);
     }
 
     /**
      * @method affCommissions
      * @description returns all commissions in a date range
-     * @param int $affId
-     * @param date $startDate
-     * @param date $endDate
-     * @return array
      */
-    public function affCommissions($affId, $startDate, $endDate)
+    public function affCommissions($affiliateId, $startDate, $endDate)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$affId),
-            php_xmlrpc_encode($startDate, array('auto_dates')),
-            php_xmlrpc_encode($endDate, array('auto_dates')));
-        return $this->methodCaller("APIAffiliateService.affCommissions", $carray);
+        return $this->makeApiCall("APIAffiliateService.affCommissions", [
+            (int)$affiliateId,
+            $startDate,
+            $endDate
+        ]);
     }
 
     /**
      * @method affPayouts
      * @description returns all affiliate payouts in a date range
-     * @param int $affId
-     * @param date $startDate
-     * @param date $endDate
-     * @return array
      */
     public function affPayouts($affId, $startDate, $endDate)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$affId),
-            php_xmlrpc_encode($startDate, array('auto_dates')),
-            php_xmlrpc_encode($endDate, array('auto_dates')));
-        return $this->methodCaller("APIAffiliateService.affPayouts", $carray);
+        return $this->makeApiCall("APIAffiliateService.affPayouts", [
+            (int)$affId,
+            $startDate,
+            $endDate
+        ]);
     }
 
     /**
      * @method affRunningTotals
-     * @description Returns a list with each row representing a single affiliates totals represented by a map with key (one of the names above, and value being the total for that variable)
-     * @param array $affList
-     * @return array
+     * @description Returns affiliate totals
      */
     public function affRunningTotals($affList)
     {
-        $carray = array(
-            php_xmlrpc_encode($affList));
-        return $this->methodCaller("APIAffiliateService.affRunningTotals", $carray);
+        return $this->makeApiCall("APIAffiliateService.affRunningTotals", [
+            $affList
+        ]);
     }
 
     /**
      * @method affSummary
      * @description returns how much the specified affiliates are owed
-     * @param array $affList
-     * @param date $startDate
-     * @param date $endDate
-     * @return array
      */
     public function affSummary($affList, $startDate, $endDate)
     {
-        $carray = array(
-            php_xmlrpc_encode($affList),
-            php_xmlrpc_encode($startDate, array('auto_dates')),
-            php_xmlrpc_encode($endDate, array('auto_dates')));
-        return $this->methodCaller("APIAffiliateService.affSummary", $carray);
+        return $this->makeApiCall("APIAffiliateService.affSummary", [
+            $affList,
+            $startDate,
+            $endDate
+        ]);
     }
 
     /**
      * @method getRedirectLinksForAffiliate
      * @description returns redirect links for affiliate specified
-     * @param $affiliateId
-     * @return int|mixed|string
      */
     public function getRedirectLinksForAffiliate($affiliateId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$affiliateId));
-        return $this->methodCaller("AffiliateService.getRedirectLinksForAffiliate", $carray);
+        return $this->makeApiCall("AffiliateService.getRedirectLinksForAffiliate", [
+            (int)$affiliateId
+        ]);
     }
 
     /**
      * @service Contact Service
      */
 
-    /**
-     * @method add
-     * @description add Contact to Infusionsoft (no duplicate checking)
-     * @param array $cMap
-     * @param string $optReason
-     * @return int
-     */
-    public function addCon($cMap, $optReason = "")
-    {
-
-        $carray = array(
-            php_xmlrpc_encode($cMap, array('auto_dates')));
-
-        $conID = $this->methodCaller("ContactService.add", $carray);
+    public function addCon($cMap, $optReason = "") {
+        $conID = $this->makeApiCall("ContactService.add", [$cMap]);
         if (!empty($cMap['Email'])) {
-            if ($optReason == "") {
-                $this->optIn($cMap['Email']);
-            } else {
-                $this->optIn($cMap['Email'], $optReason);
-            }
+            $this->optIn($cMap['Email'], $optReason ?: "API Opt In");
         }
         return $conID;
     }
 
-    /**
-     * @method update
-     * @description Update an existing contact
-     * @param int $cid
-     * @param array $cMap
-     * @return int
-     */
-    public function updateCon($cid, $cMap)
-    {
-
-        $carray = array(
-            php_xmlrpc_encode((int)$cid),
-            php_xmlrpc_encode($cMap, array('auto_dates')));
-        return $this->methodCaller("ContactService.update", $carray);
+    public function updateCon($cid, $cMap) {
+        return $this->makeApiCall("ContactService.update", [(int)$cid, $cMap]);
     }
 
-    /**
-     * @method merge
-     * @description Merge 2 contacts
-     * @param int $cid
-     * @param int $dcid
-     * @return int
-     */
-    public function mergeCon($cid, $dcid)
-    {
-        $carray = array(
-            php_xmlrpc_encode($cid),
-            php_xmlrpc_encode($dcid));
-
-        return $this->methodCaller("ContactService.merge", $carray);
+    public function mergeCon($cid, $dcid) {
+        return $this->makeApiCall("ContactService.merge", [(int)$cid, (int)$dcid]);
     }
 
-    /**
-     * @method findbyEmail
-     * @description finds all contact with an email address
-     * @param string $eml
-     * @param array $fMap
-     * @return array
-     */
-    public function findByEmail($eml, $fMap)
-    {
-
-        $carray = array(
-            php_xmlrpc_encode($eml),
-            php_xmlrpc_encode($fMap));
-        return $this->methodCaller("ContactService.findByEmail", $carray);
+    public function findByEmail($email, $fields) {
+        return $this->makeApiCall("ContactService.findByEmail", [$email, $fields]);
     }
 
-    /**
-     * @method load
-     * @description Loads a contacts data
-     * @param int $cid
-     * @param array $rFields
-     * @return array
-     */
-    public function loadCon($cid, $rFields)
-    {
-
-        $carray = array(
-            php_xmlrpc_encode((int)$cid),
-            php_xmlrpc_encode($rFields));
-        return $this->methodCaller("ContactService.load", $carray);
+    public function loadCon($contactId, $fields) {
+        return $this->makeApiCall("ContactService.load", [(int)$contactId, $fields]);
     }
 
-    /**
-     * @method addToGroup
-     * @description Apply a Tag to a Contact
-     * @param int $cid
-     * @param int $gid
-     * @return bool
-     */
-    public function grpAssign($cid, $gid)
-    {
-        $carray = array(
-            php_xmlrpc_encode((int)$cid),
-            php_xmlrpc_encode((int)$gid));
-        return $this->methodCaller("ContactService.addToGroup", $carray);
+    public function grpAssign($contactId, $groupId) {
+        return $this->makeApiCall("ContactService.addToGroup", [(int)$contactId, (int)$groupId]);
     }
 
-    /**
-     * @method removeFromGroup
-     * @description Remove a Tag from a Contact
-     * @param int $cid
-     * @param int $gid
-     * @return bool
-     */
-    public function grpRemove($cid, $gid)
-    {
-        $carray = array(
-            php_xmlrpc_encode((int)$cid),
-            php_xmlrpc_encode((int)$gid));
-        return $this->methodCaller("ContactService.removeFromGroup", $carray);
+    public function grpRemove($contactId, $groupId) {
+        return $this->makeApiCall("ContactService.removeFromGroup", [(int)$contactId, (int)$groupId]);
     }
 
-    /**
-     * @method resumeCampaignForContact
-     * @description resumes a legacy followup sequence a contact is in
-     * @param int $cid
-     * @param int $sequenceId
-     * @return bool
-     */
-    public function resumeCampaignForContact($cid, $sequenceId)
-    {
-        $carray = array(
-            php_xmlrpc_encode((int)$cid),
-            php_xmlrpc_encode((int)$sequenceId));
-        return $this->methodCaller("ContactService.resumeCampaignForContact", $carray);
+    public function resumeCampaignForContact($cid, $sequenceId) {
+        return $this->makeApiCall("ContactService.resumeCampaignForContact", [
+            (int)$cid,
+            (int)$sequenceId
+        ]);
     }
 
-    /**
-     * @method addToCampaign
-     * @description adds a contact to a legacy followup sequence
-     * @param int $cid
-     * @param int $campId
-     * @return bool
-     */
-    public function campAssign($cid, $campId)
-    {
-        $carray = array(
-            php_xmlrpc_encode((int)$cid),
-            php_xmlrpc_encode((int)$campId));
-        return $this->methodCaller("ContactService.addToCampaign", $carray);
+    public function campAssign($cid, $campId) {
+        return $this->makeApiCall("ContactService.addToCampaign", [
+            (int)$cid,
+            (int)$campId
+        ]);
     }
 
-    /**
-     * @method getNextCampaignStep
-     * @description gets next step in a legacy followup sequence
-     * @param int $cid
-     * @param int $campId
-     * @return array
-     */
-    public function getNextCampaignStep($cid, $campId)
-    {
-        $carray = array(
-            php_xmlrpc_encode((int)$cid),
-            php_xmlrpc_encode((int)$campId));
-        return
-            $this->methodCaller("ContactService.getNextCampaignStep", $carray);
+    public function getNextCampaignStep($cid, $campId) {
+        return $this->makeApiCall("ContactService.getNextCampaignStep", [
+            (int)$cid,
+            (int)$campId
+        ]);
     }
 
-    /**
-     * @method getCampaigneeStepDetails
-     * @description get step details for a legacy followup sequence
-     * @param int $cid
-     * @param int $stepId
-     * @return array
-     */
-    public function getCampaigneeStepDetails($cid, $stepId)
-    {
-        $carray = array(
-            php_xmlrpc_encode((int)$cid),
-            php_xmlrpc_encode((int)$stepId));
-        return
-            $this->methodCaller("ContactService.getCampaigneeStepDetails", $carray);
+    public function getCampaigneeStepDetails($cid, $stepId) {
+        return $this->makeApiCall("ContactService.getCampaigneeStepDetails", [
+            (int)$cid,
+            (int)$stepId
+        ]);
     }
 
-    /**
-     * @method rescheduleCampaignStep
-     * @description reschedule a legacy followup sequence
-     * @param array $cidList
-     * @param int $campId
-     * @return int
-     */
-    public function rescheduleCampaignStep($cidList, $campId)
-    {
-        $carray = array(
-            php_xmlrpc_encode($cidList),
-            php_xmlrpc_encode((int)$campId));
-        return
-            $this->methodCaller("ContactService.rescheduleCampaignStep", $carray);
+    public function rescheduleCampaignStep($cidList, $campId) {
+        return $this->makeApiCall("ContactService.rescheduleCampaignStep", [
+            $cidList,
+            (int)$campId
+        ]);
     }
 
-    /**
-     * @method removeFromCampaign
-     * @description remove a contact from a legacy followup sequence
-     * @param int $cid
-     * @param int $campId
-     * @return bool
-     */
-    public function campRemove($cid, $campId)
-    {
-        $carray = array(
-            php_xmlrpc_encode((int)$cid),
-            php_xmlrpc_encode((int)$campId));
-        return $this->methodCaller("ContactService.removeFromCampaign", $carray);
+    public function campRemove($cid, $campId) {
+        return $this->makeApiCall("ContactService.removeFromCampaign", [
+            (int)$cid,
+            (int)$campId
+        ]);
     }
 
-    /**
-     * @method pauseCampaign
-     * @description pause a legacy followup sequence for a contact
-     * @param int $cid
-     * @param int $campId
-     * @return bool
-     */
-    public function campPause($cid, $campId)
-    {
-        $carray = array(
-            php_xmlrpc_encode((int)$cid),
-            php_xmlrpc_encode((int)$campId));
-        return $this->methodCaller("ContactService.pauseCampaign", $carray);
+    public function campPause($cid, $campId) {
+        return $this->makeApiCall("ContactService.pauseCampaign", [
+            (int)$cid,
+            (int)$campId
+        ]);
     }
 
-    /**
-     * @method runActionSequence
-     * @description run an actionset on a contact
-     * @param int $cid
-     * @param int $aid
-     * @return array
-     */
-    public function runAS($cid, $aid)
-    {
-        $carray = array(
-            php_xmlrpc_encode((int)$cid),
-            php_xmlrpc_encode((int)$aid));
-        return $this->methodCaller("ContactService.runActionSequence", $carray);
+    public function runAS($cid, $aid) {
+        return $this->makeApiCall("ContactService.runActionSequence", [
+            (int)$cid,
+            (int)$aid
+        ]);
     }
 
-    /**
-     * @method applyActivityHistoryTemplate
-     * @description add a note, task, or appointment to a contact from a template
-     * @param int $contactId
-     * @param int $historyId
-     * @param int $userId
-     * @return int|mixed|string
-     */
-    public function applyActivityHistoryTemplate($contactId, $historyId, $userId)
-    {
-        $carray = array(
-            php_xmlrpc_encode((int)$contactId),
-            php_xmlrpc_encode((int)$historyId),
-            php_xmlrpc_encode((int)$userId));
-        return $this->methodCaller("ContactService.applyActivityHistoryTemplate", $carray);
+    public function applyActivityHistoryTemplate($contactId, $historyId, $userId) {
+        return $this->makeApiCall("ContactService.applyActivityHistoryTemplate", [
+            (int)$contactId,
+            (int)$historyId,
+            (int)$userId
+        ]);
     }
 
-    /**
-     * @method getActivityHistoryTemplateMap
-     * @description get templates for use with applyActivityHistoryTemplate
-     * @return array
-     */
-    public function getActivityHistoryTemplateMap()
-    {
-        $carray = array();
-        return $this->methodCaller("ContactService.getActivityHistoryTemplateMap", $carray);
+    public function getActivityHistoryTemplateMap() {
+        return $this->makeApiCall("ContactService.getActivityHistoryTemplateMap", []);
     }
 
-    /**
-     * @method addWithDupCheck
-     * @description add a contact with duplicate checking
-     * @param array $cMap
-     * @param string $checkType - 'Email', 'EmailAndName', or 'EmailAndNameAnd Company'
-     * @return int
-     */
-    public function addWithDupCheck($cMap, $checkType)
-    {
-        $carray = array(
-            php_xmlrpc_encode($cMap, array('auto_dates')),
-            php_xmlrpc_encode($checkType));
-        return $this->methodCaller("ContactService.addWithDupCheck", $carray);
+    public function addWithDupCheck($cMap, $checkType) {
+        return $this->makeApiCall("ContactService.addWithDupCheck", [$cMap, $checkType]);
     }
 
     /**
@@ -713,11 +437,11 @@ class ifiSDK
      */
     public function requestCcSubmissionToken($contactId, $successUrl, $failureUrl)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$contactId),
-            php_xmlrpc_encode((string)$successUrl),
-            php_xmlrpc_encode((string)$failureUrl));
-        return $this->methodCaller("CreditCardSubmissionService.requestSubmissionToken", $carray);
+        return $this->makeApiCall("CreditCardSubmissionService.requestSubmissionToken", [
+            (int)$contactId,
+            (string)$successUrl,
+            (string)$failureUrl
+        ]);
     }
 
     /**
@@ -728,9 +452,7 @@ class ifiSDK
      */
     public function requestCreditCardId($token)
     {
-        $carray = array(
-            php_xmlrpc_encode($token));
-        return $this->methodCaller("CreditCardSubmissionService.requestCreditCardId", $carray);
+        return $this->makeApiCall("CreditCardSubmissionService.requestCreditCardId", [$token]);
     }
 
     /**
@@ -746,26 +468,16 @@ class ifiSDK
      */
     public function dsGetSetting($module, $setting)
     {
-        $carray = array(
-            php_xmlrpc_encode($module),
-            php_xmlrpc_encode($setting));
-        return $this->methodCaller("DataService.getAppSetting", $carray);
+        return $this->makeApiCall("DataService.getAppSetting", [$module, $setting]);
     }
 
     /**
      * @method add
      * @description Add a record to a table
-     * @param string $tName
-     * @param array $iMap
-     * @return int
      */
-    public function dsAdd($tName, $iMap)
+    public function dsAdd($tableName, $data)
     {
-        $carray = array(
-            php_xmlrpc_encode($tName),
-            php_xmlrpc_encode($iMap, array('auto_dates')));
-
-        return $this->methodCaller("DataService.add", $carray);
+        return $this->makeApiCall("DataService.add", [$tableName, $data]);
     }
 
     /**
@@ -777,11 +489,7 @@ class ifiSDK
      */
     public function dsAddWithImage($tName, $iMap)
     {
-        $carray = array(
-            php_xmlrpc_encode($tName),
-            php_xmlrpc_encode($iMap, array('auto_dates', 'auto_base64')));
-
-        return $this->methodCaller("DataService.add", $carray);
+        return $this->makeApiCall("DataService.add", [$tName, $iMap]);
     }
 
     /**
@@ -793,29 +501,16 @@ class ifiSDK
      */
     public function dsDelete($tName, $id)
     {
-        $carray = array(
-            php_xmlrpc_encode($tName),
-            php_xmlrpc_encode((int)$id));
-
-        return $this->methodCaller("DataService.delete", $carray);
+        return $this->makeApiCall("DataService.delete", [$tName, (int)$id]);
     }
 
     /**
      * @method update
      * @description Update a record in any table
-     * @param string $tName
-     * @param int $id
-     * @param array $iMap
-     * @return int
      */
     public function dsUpdate($tName, $id, $iMap)
     {
-        $carray = array(
-            php_xmlrpc_encode($tName),
-            php_xmlrpc_encode((int)$id),
-            php_xmlrpc_encode($iMap, array('auto_dates')));
-
-        return $this->methodCaller("DataService.update", $carray);
+        return $this->makeApiCall("DataService.update", [$tName, (int)$id, $iMap]);
     }
 
     /**
@@ -828,76 +523,55 @@ class ifiSDK
      */
     public function dsUpdateWithImage($tName, $id, $iMap)
     {
-        $carray = array(
-            php_xmlrpc_encode($tName),
-            php_xmlrpc_encode((int)$id),
-            php_xmlrpc_encode($iMap, array('auto_dates', 'auto_base64')));
-
-        return $this->methodCaller("DataService.update", $carray);
+        return $this->makeApiCall("DataService.updateWithImage", [
+            $tName,
+            (int)$id,
+            $iMap
+        ]);
     }
 
     /**
      * @method load
      * @description Load a record from any table
-     * @param string $tName
-     * @param int $id
-     * @param array $rFields
-     * @return array
      */
     public function dsLoad($tName, $id, $rFields)
     {
-        $carray = array(
-            php_xmlrpc_encode($tName),
-            php_xmlrpc_encode((int)$id),
-            php_xmlrpc_encode($rFields));
-
-        return $this->methodCaller("DataService.load", $carray);
+        return $this->makeApiCall("DataService.load", [
+            $tName,
+            (int)$id,
+            $rFields
+        ]);
     }
 
     /**
      * @method findByField
      * @description finds records by searching a specific field
-     * @param string $tName
-     * @param int $limit
-     * @param int $page
-     * @param string $field
-     * @param string $value
-     * @param array $rFields
-     * @return array
      */
     public function dsFind($tName, $limit, $page, $field, $value, $rFields)
     {
-        $carray = array(
-            php_xmlrpc_encode($tName),
-            php_xmlrpc_encode((int)$limit),
-            php_xmlrpc_encode((int)$page),
-            php_xmlrpc_encode($field),
-            php_xmlrpc_encode($value),
-            php_xmlrpc_encode($rFields));
-
-        return $this->methodCaller("DataService.findByField", $carray);
+        return $this->makeApiCall("DataService.findByField", [
+            $tName,
+            (int)$limit,
+            (int)$page,
+            $field,
+            $value,
+            $rFields
+        ]);
     }
 
     /**
      * @method query
      * @description Finds records based on query
-     * @param string $tName
-     * @param int $limit
-     * @param int $page
-     * @param array $query
-     * @param array $rFields
-     * @return array
      */
-    public function dsQuery($tName, $limit, $page, $query, $rFields)
+    public function dsQuery($tableName, $limit, $page, $queryData, $selectedFields)
     {
-        $carray = array(
-            php_xmlrpc_encode($tName),
-            php_xmlrpc_encode((int)$limit),
-            php_xmlrpc_encode((int)$page),
-            php_xmlrpc_encode($query, array('auto_dates')),
-            php_xmlrpc_encode($rFields));
-
-        return $this->methodCaller("DataService.query", $carray);
+        return $this->makeApiCall("DataService.query", [
+            $tableName,
+            (int)$limit,
+            (int)$page,
+            $queryData,
+            $selectedFields
+        ]);
     }
 
     /**
@@ -914,86 +588,65 @@ class ifiSDK
      */
     public function dsQueryOrderBy($tName, $limit, $page, $query, $rFields, $orderByField, $ascending = TRUE)
     {
-        $carray = array(
-            php_xmlrpc_encode($tName),
-            php_xmlrpc_encode((int)$limit),
-            php_xmlrpc_encode((int)$page),
-            php_xmlrpc_encode($query, array('auto_dates')),
-            php_xmlrpc_encode($rFields),
-            php_xmlrpc_encode($orderByField),
-            php_xmlrpc_encode((bool)$ascending));
-
-        return $this->methodCaller("DataService.query", $carray);
+        return $this->makeApiCall("DataService.queryOrderBy", [
+            $tName,
+            (int)$limit,
+            (int)$page,
+            $query,
+            $rFields,
+            $orderByField,
+            (bool)$ascending
+        ]);
     }
 
     /**
      * @method DataService.Count
      * @description Gets record count based on query
-     * @param string $tName
-     * @param array $query
-     * @return int
      */
-
     public function dsCount($tName, $query)
     {
-        $carray = array(
-            php_xmlrpc_encode($tName),
-            php_xmlrpc_encode($query, array('auto_dates'))
-        );
-        return $this->methodCaller("DataService.count", $carray);
+        return $this->makeApiCall("DataService.count", [
+            $tName,
+            $query
+        ]);
     }
 
     /**
      * @method addCustomField
      * @description adds a custom field
-     * @param string $context
-     * @param string $displayName
-     * @param int $dataType
-     * @param int $headerID
-     * @return int
      */
     public function addCustomField($context, $displayName, $dataType, $headerID)
     {
-        $carray = array(
-
-            php_xmlrpc_encode($context),
-            php_xmlrpc_encode($displayName),
-            php_xmlrpc_encode($dataType),
-            php_xmlrpc_encode((int)$headerID));
-
-        return $this->methodCaller("DataService.addCustomField", $carray);
+        return $this->makeApiCall("DataService.addCustomField", [
+            $context,
+            $displayName,
+            $dataType,
+            (int)$headerID
+        ]);
     }
 
     /**
      * @method authenticateUser
      * @description Authenticates a user account in Infusionsoft
-     * @param string $userName
-     * @param string $password
-     * @return int
      */
     public function authenticateUser($userName, $password)
     {
-        $password = strtolower(md5($password));
-        $carray = array(
-            php_xmlrpc_encode($userName),
-            php_xmlrpc_encode($password));
-
-        return $this->methodCaller("DataService.authenticateUser", $carray);
+        return $this->makeApiCall("DataService.authenticateUser", [
+            $userName,
+            strtolower(md5($password))
+        ]);
     }
 
     /**
-     * @method - updateCustomField
+     * @method updateCustomField
      * @description update a custom field
-     * @param int $fieldId
-     * @param array $fieldValues
-     * @return int
      */
     public function updateCustomField($fieldId, $fieldValues)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$fieldId),
-            php_xmlrpc_encode($fieldValues));
-        return $this->methodCaller("DataService.updateCustomField", $carray);
+        return $this->makeApiCall("DataService.updateCustomField", [
+            (int)$fieldId,
+            $fieldValues
+        ]);
     }
 
     /**
@@ -1003,209 +656,155 @@ class ifiSDK
     /**
      * @method addFreeTrial
      * @description creates a subscription free trial for the shopping cart
-     * @param string $name
-     * @param string $description
-     * @param int $freeTrialDays
-     * @param int $hidePrice
-     * @param int $subscriptionPlanId
-     * @return int
      */
     public function addFreeTrial($name, $description, $freeTrialDays, $hidePrice, $subscriptionPlanId)
     {
-        $carray = array(
-            php_xmlrpc_encode((string)$name),
-            php_xmlrpc_encode((string)$description),
-            php_xmlrpc_encode((int)$freeTrialDays),
-            php_xmlrpc_encode((int)$hidePrice),
-            php_xmlrpc_encode((int)$subscriptionPlanId));
-        return $this->methodCaller("DiscountService.addFreeTrial", $carray);
+        return $this->makeApiCall("DiscountService.addFreeTrial", [
+            (string)$name,
+            (string)$description,
+            (int)$freeTrialDays,
+            (int)$hidePrice,
+            (int)$subscriptionPlanId
+        ]);
     }
 
     /**
      * @method getFreeTrial
      * @description retrieves the details on the given free trial
-     * @param int $trialId
-     * @return array
      */
     public function getFreeTrial($trialId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$trialId));
-        return $this->methodCaller("DiscountService.getFreeTrial", $carray);
+        return $this->makeApiCall("DiscountService.getFreeTrial", [
+            (int)$trialId
+        ]);
     }
 
     /**
      * @method addOrderTotalDiscount
      * @description creates an order total discount for the shopping cart
-     * @param string $name
-     * @param string $description
-     * @param int $applyDiscountToCommission
-     * @param int $percentOrAmt
-     * @paramOption 0 Amount
-     * @paramOption 1 Percent
-     * @param double $amt
-     * @param string $payType
-     * @paramOption Gross
-     * @paramOption Net
-     * @return int
      */
     public function addOrderTotalDiscount($name, $description, $applyDiscountToCommission, $percentOrAmt, $amt, $payType)
     {
-        $carray = array(
-            php_xmlrpc_encode((string)$name),
-            php_xmlrpc_encode((string)$description),
-            php_xmlrpc_encode((int)$applyDiscountToCommission),
-            php_xmlrpc_encode((int)$percentOrAmt),
-            php_xmlrpc_encode($amt),
-            php_xmlrpc_encode($payType));
-        return $this->methodCaller("DiscountService.addOrderTotalDiscount", $carray);
+        return $this->makeApiCall("DiscountService.addOrderTotalDiscount", [
+            (string)$name,
+            (string)$description,
+            (int)$applyDiscountToCommission,
+            (int)$percentOrAmt,
+            $amt,
+            $payType
+        ]);
     }
 
     /**
      * @method getOrderTotalDiscount
      * @description retrieves the details on the given order total discount
-     * @param int $id
-     * @return array
      */
     public function getOrderTotalDiscount($id)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$id));
-        return $this->methodCaller("DiscountService.getOrderTotalDiscount", $carray);
+        return $this->makeApiCall("DiscountService.getOrderTotalDiscount", [
+            (int)$id
+        ]);
     }
 
     /**
      * @method addCategoryDiscount
      * @description creates a product category discount for the shopping cart
-     * @param string $name
-     * @param string $description
-     * @param int $applyDiscountToCommission
-     * @param double $amt
-     * @return int
      */
     public function addCategoryDiscount($name, $description, $applyDiscountToCommission, $amt)
     {
-        $carray = array(
-            php_xmlrpc_encode((string)$name),
-            php_xmlrpc_encode((string)$description),
-            php_xmlrpc_encode((int)$applyDiscountToCommission),
-            php_xmlrpc_encode($amt));
-        return $this->methodCaller("DiscountService.addCategoryDiscount", $carray);
+        return $this->makeApiCall("DiscountService.addCategoryDiscount", [
+            (string)$name,
+            (string)$description,
+            (int)$applyDiscountToCommission,
+            $amt
+        ]);
     }
 
     /**
      * @method getCategoryDiscount
      * @description retrieves the details on the Category discount
-     * @param int $id
-     * @return array
      */
     public function getCategoryDiscount($id)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$id));
-        return $this->methodCaller("DiscountService.getCategoryDiscount", $carray);
+        return $this->makeApiCall("DiscountService.getCategoryDiscount", [
+            (int)$id
+        ]);
     }
 
     /**
      * @method addCategoryAssignmentToCategoryDiscount
      * @description assigns a product category to a particular category discount
-     * @param int $categoryDiscountId
-     * @param int $productCategoryId
-     * @return int
      */
     public function addCategoryAssignmentToCategoryDiscount($categoryDiscountId, $productCategoryId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$categoryDiscountId),
-            php_xmlrpc_encode((int)$productCategoryId));
-        return $this->methodCaller("DiscountService.addCategoryAssignmentToCategoryDiscount", $carray);
+        return $this->makeApiCall("DiscountService.addCategoryAssignmentToCategoryDiscount", [
+            (int)$categoryDiscountId,
+            (int)$productCategoryId
+        ]);
     }
 
     /**
      * @method getCategoryAssignmentsForCategoryDiscount
-     * @description retrieves the product categories that are currently set for the given category discount
-     * @param int $id
-     * @return array
+     * @description retrieves the product categories for the given category discount
      */
     public function getCategoryAssignmentsForCategoryDiscount($id)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$id));
-        return $this->methodCaller("DiscountService.getCategoryAssignmentsForCategoryDiscount", $carray);
+        return $this->makeApiCall("DiscountService.getCategoryAssignmentsForCategoryDiscount", [
+            (int)$id
+        ]);
     }
 
     /**
      * @method addProductTotalDiscount
      * @description creates a product total discount for the shopping cart
-     * @param string $name
-     * @param string $description
-     * @param int $applyDiscountToCommission
-     * @param int $productId
-     * @param int $percentOrAmt
-     * @paramOption 0 Amount
-     * @paramOption 1 Percent
-     * @param double $amt
-     * @return int
      */
     public function addProductTotalDiscount($name, $description, $applyDiscountToCommission, $productId, $percentOrAmt, $amt)
     {
-        $carray = array(
-            php_xmlrpc_encode((string)$name),
-            php_xmlrpc_encode((string)$description),
-            php_xmlrpc_encode((int)$applyDiscountToCommission),
-            php_xmlrpc_encode((int)$productId),
-            php_xmlrpc_encode((int)$percentOrAmt),
-            php_xmlrpc_encode($amt));
-        return $this->methodCaller("DiscountService.addProductTotalDiscount", $carray);
+        return $this->makeApiCall("DiscountService.addProductTotalDiscount", [
+            (string)$name,
+            (string)$description,
+            (int)$applyDiscountToCommission,
+            (int)$productId,
+            (int)$percentOrAmt,
+            $amt
+        ]);
     }
 
     /**
      * @method getProductTotalDiscount
      * @description retrieves the details on the given product total discount
-     * @param int $id
-     * @return array
      */
     public function getProductTotalDiscount($id)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$id));
-        return $this->methodCaller("DiscountService.getProductTotalDiscount", $carray);
+        return $this->makeApiCall("DiscountService.getProductTotalDiscount", [
+            (int)$id
+        ]);
     }
 
     /**
      * @method addShippingTotalDiscount
      * @description creates a shipping total discount for the shopping cart
-     * @param string $name
-     * @param string $description
-     * @param int $applyDiscountToCommission
-     * @param int $percentOrAmt
-     * @paramOption 0 Amount
-     * @paramOption 1 Percent
-     * @param double $amt
-     * @return int
      */
     public function addShippingTotalDiscount($name, $description, $applyDiscountToCommission, $percentOrAmt, $amt)
     {
-        $carray = array(
-            php_xmlrpc_encode((string)$name),
-            php_xmlrpc_encode((string)$description),
-            php_xmlrpc_encode((int)$applyDiscountToCommission),
-            php_xmlrpc_encode((int)$percentOrAmt),
-            php_xmlrpc_encode($amt));
-        return $this->methodCaller("DiscountService.addShippingTotalDiscount", $carray);
+        return $this->makeApiCall("DiscountService.addShippingTotalDiscount", [
+            (string)$name,
+            (string)$description,
+            (int)$applyDiscountToCommission,
+            (int)$percentOrAmt,
+            $amt
+        ]);
     }
 
     /**
      * @method getShippingTotalDiscount
      * @description retrieves the details on the given shipping total discount
-     * @param int $id
-     * @return array
      */
     public function getShippingTotalDiscount($id)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$id));
-        return $this->methodCaller("DiscountService.getShippingTotalDiscount", $carray);
+        return $this->makeApiCall("DiscountService.getShippingTotalDiscount", [
+            (int)$id
+        ]);
     }
 
     /**
@@ -1235,22 +834,22 @@ class ifiSDK
                                 $bccAddresses, $contentType, $subject, $htmlBody, $txtBody,
                                 $header, $strRecvdDate, $strSentDate, $emailSentType = 1)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$cId),
-            php_xmlrpc_encode($fromName),
-            php_xmlrpc_encode($fromAddress),
-            php_xmlrpc_encode($toAddress),
-            php_xmlrpc_encode($ccAddresses),
-            php_xmlrpc_encode($bccAddresses),
-            php_xmlrpc_encode($contentType),
-            php_xmlrpc_encode($subject),
-            php_xmlrpc_encode($htmlBody),
-            php_xmlrpc_encode($txtBody),
-            php_xmlrpc_encode($header),
-            php_xmlrpc_encode($strRecvdDate),
-            php_xmlrpc_encode($strSentDate),
-            php_xmlrpc_encode($emailSentType));
-        return $this->methodCaller("APIEmailService.attachEmail", $carray);
+        return $this->makeApiCall("APIEmailService.attachEmail", [
+            (int)$cId,
+            $fromName,
+            $fromAddress,
+            $toAddress,
+            $ccAddresses,
+            $bccAddresses,
+            $contentType,
+            $subject,
+            $htmlBody,
+            $txtBody,
+            $header,
+            $strRecvdDate,
+            $strSentDate,
+            $emailSentType
+        ]);
     }
 
     /**
@@ -1261,9 +860,9 @@ class ifiSDK
      */
     public function getAvailableMergeFields($mergeContext)
     {
-        $carray = array(
-            php_xmlrpc_encode($mergeContext));
-        return $this->methodCaller("APIEmailService.getAvailableMergeFields", $carray);
+        return $this->makeApiCall("APIEmailService.getAvailableMergeFields", [
+            $mergeContext
+        ]);
     }
 
     /**
@@ -1282,16 +881,17 @@ class ifiSDK
      */
     public function sendEmail($conList, $fromAddress, $toAddress, $ccAddresses, $bccAddresses, $contentType, $subject, $htmlBody, $txtBody)
     {
-        $carray = array(
-            php_xmlrpc_encode($conList),
-            php_xmlrpc_encode($fromAddress),
-            php_xmlrpc_encode($toAddress),
-            php_xmlrpc_encode($ccAddresses),
-            php_xmlrpc_encode($bccAddresses),
-            php_xmlrpc_encode($contentType),
-            php_xmlrpc_encode($subject),
-            php_xmlrpc_encode($htmlBody),
-            php_xmlrpc_encode($txtBody));
+        return $this->makeApiCall("APIEmailService.sendEmail", [
+            $conList,
+            $fromAddress,
+            $toAddress,
+            $ccAddresses,
+            $bccAddresses,
+            $contentType,
+            $subject,
+            $htmlBody,
+            $txtBody
+        ]);
 
         return $this->methodCaller("APIEmailService.sendEmail", $carray);
     }
@@ -1306,10 +906,10 @@ class ifiSDK
      */
     public function sendTemplate($conList, $template)
     {
-        $carray = array(
-            php_xmlrpc_encode($conList),
-            php_xmlrpc_encode($template));
-        return $this->methodCaller("APIEmailService.sendEmail", $carray);
+        return $this->makeApiCall("APIEmailService.sendEmail", [
+            $conList,
+            $template
+        ]);
     }
 
     /**
@@ -1331,19 +931,19 @@ class ifiSDK
     public function createEmailTemplate($title, $userID, $fromAddress, $toAddress, $ccAddresses, $bccAddresses, $contentType, $subject, $htmlBody,
                                         $txtBody)
     {
-        $carray = array(
-            php_xmlrpc_encode($title),
-            php_xmlrpc_encode($category = ''),
-            php_xmlrpc_encode($fromAddress),
-            php_xmlrpc_encode($toAddress),
-            php_xmlrpc_encode($ccAddresses),
-            php_xmlrpc_encode($bccAddresses),
-            php_xmlrpc_encode($subject),
-            php_xmlrpc_encode($txtBody),
-            php_xmlrpc_encode($htmlBody),
-            php_xmlrpc_encode($contentType),
-            php_xmlrpc_encode($mergeContext = 'Contact'));
-        return $this->methodCaller("APIEmailService.addEmailTemplate", $carray);
+        return $this->makeApiCall("APIEmailService.addEmailTemplate", [
+            $title,
+            $category = '',
+            $fromAddress,
+            $toAddress,
+            $ccAddresses,
+            $bccAddresses,
+            $subject,
+            $txtBody,
+            $htmlBody,
+            $contentType,
+            $mergeContext = 'Contact'
+        ]);
     }
 
     /**
@@ -1364,19 +964,19 @@ class ifiSDK
      */
     public function addEmailTemplate($title, $category, $fromAddress, $toAddress, $ccAddresses, $bccAddresses, $subject, $txtBody, $htmlBody, $contentType, $mergeContext)
     {
-        $carray = array(
-            php_xmlrpc_encode($title),
-            php_xmlrpc_encode($category),
-            php_xmlrpc_encode($fromAddress),
-            php_xmlrpc_encode($toAddress),
-            php_xmlrpc_encode($ccAddresses),
-            php_xmlrpc_encode($bccAddresses),
-            php_xmlrpc_encode($subject),
-            php_xmlrpc_encode($txtBody),
-            php_xmlrpc_encode($htmlBody),
-            php_xmlrpc_encode($contentType),
-            php_xmlrpc_encode($mergeContext));
-        return $this->methodCaller("APIEmailService.addEmailTemplate", $carray);
+        return $this->makeApiCall("APIEmailService.addEmailTemplate", [
+            $title,
+            $category,
+            $fromAddress,
+            $toAddress,
+            $ccAddresses,
+            $bccAddresses,
+            $subject,
+            $txtBody,
+            $htmlBody,
+            $contentType,
+            $mergeContext
+        ]);
     }
 
     /**
@@ -1387,9 +987,9 @@ class ifiSDK
      */
     public function getEmailTemplate($templateId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$templateId));
-        return $this->methodCaller("APIEmailService.getEmailTemplate", $carray);
+        return $this->makeApiCall("APIEmailService.getEmailTemplate", [
+            (int)$templateId
+        ]);
     }
 
     /**
@@ -1411,20 +1011,20 @@ class ifiSDK
      */
     public function updateEmailTemplate($templateID, $title, $categories, $fromAddress, $toAddress, $ccAddress, $bccAddress, $subject, $textBody, $htmlBody, $contentType, $mergeContext)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$templateID),
-            php_xmlrpc_encode($title),
-            php_xmlrpc_encode($categories),
-            php_xmlrpc_encode($fromAddress),
-            php_xmlrpc_encode($toAddress),
-            php_xmlrpc_encode($ccAddress),
-            php_xmlrpc_encode($bccAddress),
-            php_xmlrpc_encode($subject),
-            php_xmlrpc_encode($textBody),
-            php_xmlrpc_encode($htmlBody),
-            php_xmlrpc_encode($contentType),
-            php_xmlrpc_encode($mergeContext));
-        return $this->methodCaller("APIEmailService.updateEmailTemplate", $carray);
+        return $this->makeApiCall("APIEmailService.updateEmailTemplate", [
+            (int)$templateID,
+            $title,
+            $categories,
+            $fromAddress,
+            $toAddress,
+            $ccAddress,
+            $bccAddress,
+            $subject,
+            $textBody,
+            $htmlBody,
+            $contentType,
+            $mergeContext
+        ]);
     }
 
     /**
@@ -1435,9 +1035,9 @@ class ifiSDK
      */
     public function optStatus($email)
     {
-        $carray = array(
-            php_xmlrpc_encode($email));
-        return $this->methodCaller("APIEmailService.getOptStatus", $carray);
+        return $this->makeApiCall("APIEmailService.getOptStatus", [
+            $email
+        ]);
     }
 
     /**
@@ -1450,10 +1050,10 @@ class ifiSDK
      */
     public function optIn($email, $reason = 'Contact Was Opted In through the API')
     {
-        $carray = array(
-            php_xmlrpc_encode($email),
-            php_xmlrpc_encode($reason));
-        return $this->methodCaller("APIEmailService.optIn", $carray);
+        return $this->makeApiCall("APIEmailService.optIn", [
+            $email,
+            $reason
+        ]);
     }
 
     /**
@@ -1465,29 +1065,10 @@ class ifiSDK
      */
     public function optOut($email, $reason = 'Contact Was Opted Out through the API')
     {
-        $carray = array(
-            php_xmlrpc_encode($email),
-            php_xmlrpc_encode($reason));
-        return $this->methodCaller("APIEmailService.optOut", $carray);
-    }
-
-    /**
-     * @service File Service
-     */
-
-    /**
-     * @method getFile
-     * @description Gets File
-     * @param int $fileID
-     * @return base64 encoded file data
-     */
-    public function getFile($fileID)
-    {
-
-        $carray = array(
-            php_xmlrpc_encode((int)$fileID));
-        $result = $this->methodCaller("FileService.getFile", $carray);
-        return $result;
+        return $this->makeApiCall("APIEmailService.optOut", [
+            $email,
+            $reason
+        ]);
     }
 
     /**
@@ -1502,64 +1083,52 @@ class ifiSDK
     {
         $result = 0;
         if ($cid == 0) {
-            $carray = array(
-                php_xmlrpc_encode($fileName),
-                php_xmlrpc_encode($base64Enc));
-            $result = $this->methodCaller("FileService.uploadFile", $carray);
+            return $this->makeApiCall("FileService.uploadFile", [
+                $fileName,
+                $base64Enc
+            ]);
         } else {
-            $carray = array(
-                php_xmlrpc_encode((int)$cid),
-                php_xmlrpc_encode($fileName),
-                php_xmlrpc_encode($base64Enc));
-            $result = $this->methodCaller("FileService.uploadFile", $carray);
+            return $this->makeApiCall("FileService.uploadFile", [
+                (int)$cid,
+                $fileName,
+                $base64Enc
+            ]);
         }
-        return $result;
     }
 
     /**
      * @method replaceFile
-     * @description replaces existing file
-     * @param int $fileID
-     * @param string $base64Enc
-     * @return bool
+     * @description replaces an existing file
      */
-    public function replaceFile($fileID, $base64Enc)
+    public function replaceFile($fileId, $base64Enc)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$fileID),
-            php_xmlrpc_encode($base64Enc));
-        $result = $this->methodCaller("FileService.replaceFile", $carray);
-        return $result;
+        return $this->makeApiCall("FileService.replaceFile", [
+            (int)$fileId,
+            $base64Enc
+        ]);
     }
 
     /**
      * @method renameFile
-     * @description rename existing file
-     * @param int $fileID
-     * @param string $fileName
-     * @return bool
+     * @description renames an existing file
      */
-    public function renameFile($fileID, $fileName)
+    public function renameFile($fileId, $fileName)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$fileID),
-            php_xmlrpc_encode($fileName));
-        $result = $this->methodCaller("FileService.renameFile", $carray);
-        return $result;
+        return $this->makeApiCall("FileService.renameFile", [
+            (int)$fileId,
+            $fileName
+        ]);
     }
 
     /**
      * @method getDownloadUrl
      * @description gets download url for public files
-     * @param int $fileID
-     * @return string
      */
-    public function getDownloadUrl($fileID)
+    public function getDownloadUrl($fileId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$fileID));
-        $result = $this->methodCaller("FileService.getDownloadUrl", $carray);
-        return $result;
+        return $this->makeApiCall("FileService.getDownloadUrl", [
+            (int)$fileId
+        ]);
     }
 
     /**
@@ -1568,19 +1137,15 @@ class ifiSDK
 
     /**
      * @method achieveGoal
-     * @description achieves an api goal inside of the Campaign Builder to start a campaign
-     * @param string $integration
-     * @param string $callName
-     * @param int $contactId
-     * @return array
+     * @description achieves an api goal inside of the Campaign Builder
      */
     public function achieveGoal($integration, $callName, $contactId)
     {
-        $carray = array(
-            php_xmlrpc_encode((string)$integration),
-            php_xmlrpc_encode((string)$callName),
-            php_xmlrpc_encode((int)$contactId));
-        return $this->methodCaller("FunnelService.achieveGoal", $carray);
+        return $this->makeApiCall("FunnelService.achieveGoal", [
+            (string)$integration,
+            (string)$callName,
+            (int)$contactId
+        ]);
     }
 
     /**
@@ -1595,9 +1160,9 @@ class ifiSDK
      */
     public function deleteInvoice($Id)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$Id));
-        return $this->methodCaller("InvoiceService.deleteInvoice", $carray);
+        return $this->makeApiCall("InvoiceService.deleteInvoice", [
+            (int)$Id
+        ]);
     }
 
     /**
@@ -1608,100 +1173,60 @@ class ifiSDK
      */
     public function deleteSubscription($Id)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$Id));
-        return $this->methodCaller("InvoiceService.deleteSubscription", $carray);
-    }
-
-    /**
-     * @method getPayments
-     * @description Get a list of payments on an invoice
-     * @param $Id
-     * @return array
-     */
-    public function getPayments($Id)
-    {
-        $carray = array(
-            php_xmlrpc_encode((int)$Id));
-        return $this->methodCaller("InvoiceService.getPayments", $carray);
+        return $this->makeApiCall("InvoiceService.deleteSubscription", [
+            (int)$Id
+        ]);
     }
 
     /**
      * @method setInvoiceSyncStatus
      * @description sets the sync status column on the Invoice table
-     * @param $Id
-     * @param $syncStatus
-     * @return bool
      */
-    public function setInvoiceSyncStatus($Id, $syncStatus)
+    public function setInvoiceSyncStatus($invoiceId, $syncStatus)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$Id),
-            php_xmlrpc_encode($syncStatus));
-        return $this->methodCaller("InvoiceService.setInvoiceSyncStatus", $carray);
+        return $this->makeApiCall("InvoiceService.setInvoiceSyncStatus", [
+            (int)$invoiceId,
+            $syncStatus
+        ]);
     }
 
     /**
      * @method setPaymentSyncStatus
      * @description sets the sync status column on the Payment table
-     * @param $Id
-     * @param $Status
-     * @return bool
      */
-    public function setPaymentSyncStatus($Id, $Status)
+    public function setPaymentSyncStatus($paymentId, $syncStatus)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$Id),
-            php_xmlrpc_encode($Status));
-        return $this->methodCaller("InvoiceService.setPaymentSyncStatus", $carray);
+        return $this->makeApiCall("InvoiceService.setPaymentSyncStatus", [
+            (int)$paymentId,
+            $syncStatus
+        ]);
     }
 
     /**
      * @method getPluginStatus
      * @description Tells if the Ecommerce plugin is enabled
-     * @param string $className
-     * @return bool
      */
     public function getPluginStatus($className)
     {
-        $carray = array(
-            php_xmlrpc_encode($className));
-        return $this->methodCaller("InvoiceService.getPluginStatus", $carray);
+        return $this->makeApiCall("InvoiceService.getPluginStatus", [
+            $className
+        ]);
     }
 
     /**
-     * @method getAllPaymentOptions
-     * @description get a list of all Payment Options
-     * @return array
+     * @method manualPmt
+     * @description add a manual payment to an invoice
      */
-    public function getAllPaymentOptions()
+    public function manualPmt($invoiceId, $amt, $paymentDate, $paymentType, $paymentDescription, $bypassCommissions)
     {
-        $carray = array();
-        return $this->methodCaller("InvoiceService.getAllPaymentOptions", $carray);
-    }
-
-    /**
-     * @method addManualPayment
-     * @description add a manual payment to an invoice.
-     * @note Will not complete Purchase Goals or Successful Purchase Actions
-     * @param int $invId
-     * @param double $amt
-     * @param datetime $payDate
-     * @param datetime $payType
-     * @param string $payDesc
-     * @param bool $bypassComm
-     * @return int
-     */
-    public function manualPmt($invId, $amt, $payDate, $payType, $payDesc, $bypassComm)
-    {
-        $carray = array(
-            php_xmlrpc_encode((int)$invId),
-            php_xmlrpc_encode($amt),
-            php_xmlrpc_encode($payDate, array('auto_dates')),
-            php_xmlrpc_encode($payType),
-            php_xmlrpc_encode($payDesc),
-            php_xmlrpc_encode($bypassComm));
-        return $this->methodCaller("InvoiceService.addManualPayment", $carray);
+        return $this->makeApiCall("InvoiceService.addManualPayment", [
+            (int)$invoiceId,
+            $amt,
+            $paymentDate,
+            $paymentType,
+            $paymentDescription,
+            (boolean)$bypassCommissions
+        ]);
     }
 
     /**
@@ -1719,17 +1244,16 @@ class ifiSDK
      */
     public function commOverride($invId, $affId, $prodId, $percentage, $amt, $payType, $desc, $date)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$invId),
-            php_xmlrpc_encode((int)$affId),
-            php_xmlrpc_encode((int)$prodId),
-            php_xmlrpc_encode($percentage),
-            php_xmlrpc_encode($amt),
-            php_xmlrpc_encode($payType),
-            php_xmlrpc_encode($desc),
-            php_xmlrpc_encode($date, array('auto_dates')));
-
-        return $this->methodCaller("InvoiceService.addOrderCommissionOverride", $carray);
+        return $this->makeApiCall("InvoiceService.addOrderCommissionOverride", [
+            (int)$invId,
+            (int)$affId,
+            (int)$prodId,
+            $percentage,
+            $amt,
+            $payType,
+            $desc,
+            $date
+        ]);
     }
 
     /**
@@ -1759,16 +1283,15 @@ class ifiSDK
      */
     public function addOrderItem($ordId, $prodId, $type, $price, $qty, $desc, $notes)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$ordId),
-            php_xmlrpc_encode((int)$prodId),
-            php_xmlrpc_encode((int)$type),
-            php_xmlrpc_encode($price),
-            php_xmlrpc_encode($qty),
-            php_xmlrpc_encode($desc),
-            php_xmlrpc_encode($notes));
-
-        return $this->methodCaller("InvoiceService.addOrderItem", $carray);
+        return $this->makeApiCall("InvoiceService.addOrderItem", [
+            (int)$ordId,
+            (int)$prodId,
+            (int)$type,
+            $price,
+            $qty,
+            $desc,
+            $notes
+        ]);
     }
 
     /**
@@ -1789,102 +1312,100 @@ class ifiSDK
      */
     public function payPlan($ordId, $aCharge, $ccId, $merchId, $retry, $retryAmt, $initialPmt, $initialPmtDate, $planStartDate, $numPmts, $pmtDays)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$ordId),
-            php_xmlrpc_encode($aCharge),
-            php_xmlrpc_encode((int)$ccId),
-            php_xmlrpc_encode((int)$merchId),
-            php_xmlrpc_encode((int)$retry),
-            php_xmlrpc_encode((int)$retryAmt),
-            php_xmlrpc_encode($initialPmt),
-            php_xmlrpc_encode($initialPmtDate, array('auto_dates')),
-            php_xmlrpc_encode($planStartDate, array('auto_dates')),
-            php_xmlrpc_encode((int)$numPmts),
-            php_xmlrpc_encode((int)$pmtDays));
-        return $this->methodCaller("InvoiceService.addPaymentPlan", $carray);
+        return $this->makeApiCall("InvoiceService.addPaymentPlan", [
+            (int)$ordId,
+            $aCharge,
+            (int)$ccId,
+            (int)$merchId,
+            (int)$retry,
+            (int)$retryAmt,
+            $initialPmt,
+            $initialPmtDate,
+            $planStartDate,
+            (int)$numPmts,
+            (int)$pmtDays
+        ]);
     }
 
     /**
      * @method addRecurringOrder
      * @description creates a subscription for a contact
-     * @param int $cid
-     * @param bool $allowDup
-     * @param int $progId
-     * @param int $merchId
-     * @param int $ccId
-     * @param int $affId
-     * @param  int $daysToCharge
-     * @return int
      */
-    public function addRecurring($cid, $allowDup, $progId, $merchId, $ccId, $affId, $daysToCharge)
+    public function addRecurringOrder($contactId, $allowDuplicate, $programId, $merchantAccountId, $creditCardId, $affiliateId, $daysToCharge)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$cid),
-            php_xmlrpc_encode($allowDup),
-            php_xmlrpc_encode((int)$progId),
-            php_xmlrpc_encode((int)$merchId),
-            php_xmlrpc_encode((int)$ccId),
-            php_xmlrpc_encode((int)$affId),
-            php_xmlrpc_encode($daysToCharge));
-        return $this->methodCaller("InvoiceService.addRecurringOrder", $carray);
+        return $this->makeApiCall("RecurringOrderService.addRecurringOrder", [
+            (int)$contactId,
+            (boolean)$allowDuplicate,
+            (int)$programId,
+            (int)$merchantAccountId,
+            (int)$creditCardId,
+            (int)$affiliateId,
+            (int)$daysToCharge
+        ]);
     }
 
     /**
-     * @method addRecurringOrderAdv
-     * @description creates a subscription for a contact
-     * @note Allows Quantity, Price and Tax
-     * @param int $cid
-     * @param bool $allowDup
-     * @param int $progId
-     * @param int $qty
-     * @param double $price
-     * @param bool $allowTax
-     * @param int $merchId
-     * @param int $ccId
-     * @param int $affId
-     * @param int $daysToCharge
-     * @return int
+     * @method getRecurringOrder
+     * @description gets details on a subscription
      */
-    public function addRecurringAdv($cid, $allowDup, $progId, $qty, $price, $allowTax, $merchId, $ccId, $affId, $daysToCharge)
+    public function getRecurringOrder($recurringOrderId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$cid),
-            php_xmlrpc_encode($allowDup),
-            php_xmlrpc_encode((int)$progId),
-            php_xmlrpc_encode($qty),
-            php_xmlrpc_encode($price),
-            php_xmlrpc_encode($allowTax),
-            php_xmlrpc_encode($merchId),
-            php_xmlrpc_encode((int)$ccId),
-            php_xmlrpc_encode((int)$affId),
-            php_xmlrpc_encode($daysToCharge));
-        return $this->methodCaller("InvoiceService.addRecurringOrder", $carray);
+        return $this->makeApiCall("RecurringOrderService.getRecurringOrder", [
+            (int)$recurringOrderId
+        ]);
     }
 
     /**
-     * @method calculateAmountOwed
-     * @description calculate amount owed on an invoice
-     * @param int $invId
-     * @return double
+     * @method getAllRecurringOrders
+     * @description gets all subscriptions for a contact
      */
-    public function amtOwed($invId)
+    public function getAllRecurringOrders($contactId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$invId));
-        return $this->methodCaller("InvoiceService.calculateAmountOwed", $carray);
+        return $this->makeApiCall("RecurringOrderService.getAllRecurringOrders", [
+            (int)$contactId
+        ]);
     }
 
     /**
-     * @method getInvoiceId
-     * @description get an Invoice Id attached to a one-time order
-     * @param int $orderId
-     * @return int
+     * @method getPayments
+     * @description gets payments for an invoice
      */
-    public function getInvoiceId($orderId)
+    public function getPayments($invoiceId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$orderId));
-        return $this->methodCaller("InvoiceService.getInvoiceId", $carray);
+        return $this->makeApiCall("InvoiceService.getPayments", [
+            (int)$invoiceId
+        ]);
+    }
+
+    /**
+     * @method getAllPaymentOptions
+     * @description gets all payment options
+     */
+    public function getAllPaymentOptions()
+    {
+        return $this->makeApiCall("InvoiceService.getAllPaymentOptions", []);
+    }
+
+    /**
+     * @method validateCreditCard
+     * @description validates a credit card
+     */
+    public function validateCreditCard($creditCard)
+    {
+        return $this->makeApiCall("InvoiceService.validateCreditCard", [
+            is_array($creditCard) ? $creditCard : (int)$creditCard
+        ]);
+    }
+
+    /**
+     * @method getFile
+     * @description gets a file from Infusionsoft
+     */
+    public function getFile($fileId)
+    {
+        return $this->makeApiCall("FileService.getFile", [
+            (int)$fileId
+        ]);
     }
 
     /**
@@ -1895,64 +1416,101 @@ class ifiSDK
      */
     public function getOrderId($invoiceId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$invoiceId));
-        return $this->methodCaller("InvoiceService.getOrderId", $carray);
+        return $this->makeApiCall("InvoiceService.getOrderId", [
+            (int)$invoiceId
+        ]);
     }
 
     /**
      * @method chargeInvoice
-     * @description Charges an invoice immediately
-     * @param int $invId
-     * @param string $notes
-     * @param int $ccId
-     * @param int $merchId
-     * @param bool $bypassComm
-     * @return array
+     * @description charges an invoice using a credit card
      */
-    public function chargeInvoice($invId, $notes, $ccId, $merchId, $bypassComm)
+    public function chargeInvoice($invoiceId, $notes, $creditCardId, $merchantAccountId, $bypassCommissions)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$invId),
-            php_xmlrpc_encode($notes),
-            php_xmlrpc_encode((int)$ccId),
-            php_xmlrpc_encode((int)$merchId),
-            php_xmlrpc_encode($bypassComm));
-        return $this->methodCaller("InvoiceService.chargeInvoice", $carray);
+        return $this->makeApiCall("InvoiceService.chargeInvoice", [
+            (int)$invoiceId,
+            $notes,
+            (int)$creditCardId,
+            (int)$merchantAccountId,
+            (boolean)$bypassCommissions
+        ]);
     }
 
     /**
      * @method createBlankOrder
      * @description creates a blank order for a contact
-     * @param int $conId
-     * @param string $desc
-     * @param date $oDate
-     * @param int $leadAff
-     * @param int $saleAff
-     * @return int
      */
-    public function blankOrder($conId, $desc, $oDate, $leadAff, $saleAff)
+    public function createBlankOrder($contactId, $description, $orderDate, $leadAffiliateId = 0, $salesAffiliateId = 0)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$conId),
-            php_xmlrpc_encode($desc),
-            php_xmlrpc_encode($oDate, array('auto_dates')),
-            php_xmlrpc_encode((int)$leadAff),
-            php_xmlrpc_encode((int)$saleAff));
-        return $this->methodCaller("InvoiceService.createBlankOrder", $carray);
+        return $this->makeApiCall("OrderService.createBlankOrder", [
+            (int)$contactId,
+            $description,
+            $orderDate,
+            (int)$leadAffiliateId,
+            (int)$salesAffiliateId
+        ]);
+    }
+
+    /**
+     * @method addOrderCommissionOverride
+     * @description adds a commission override to an order
+     */
+    public function addOrderCommissionOverride($orderId, $affiliateId, $productId, $percentage, $amount, $payoutType, $description, $date)
+    {
+        return $this->makeApiCall("OrderService.addOrderCommissionOverride", [
+            (int)$orderId,
+            (int)$affiliateId,
+            (int)$productId,
+            $percentage,
+            $amount,
+            (int)$payoutType,
+            $description,
+            $date
+        ]);
     }
 
     /**
      * @method createInvoiceForRecurring
-     * @description creates an invoice for a subscription
-     * @param int $rid
-     * @return int
+     * @description creates an invoice for a recurring order
      */
-    public function recurringInvoice($rid)
+    public function createInvoiceForRecurring($recurringOrderId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$rid));
-        return $this->methodCaller("InvoiceService.createInvoiceForRecurring", $carray);
+        return $this->makeApiCall("OrderService.createInvoiceForRecurring", [
+            (int)$recurringOrderId
+        ]);
+    }
+
+    /**
+     * @method getOrderByOrderId
+     * @description retrieves an order by ID
+     */
+    public function getOrderByOrderId($orderId)
+    {
+        return $this->makeApiCall("OrderService.getOrderById", [
+            (int)$orderId
+        ]);
+    }
+
+    /**
+     * @method getPayPlanStatus
+     * @description gets the status of a payment plan
+     */
+    public function getPayPlanStatus($payPlanId)
+    {
+        return $this->makeApiCall("OrderService.getPayPlanStatus", [
+            (int)$payPlanId
+        ]);
+    }
+
+    /**
+     * @method calculateAmountOwed
+     * @description calculates amount owed on a payment plan
+     */
+    public function calculateAmountOwed($payPlanId)
+    {
+        return $this->makeApiCall("OrderService.calculateAmountOwed", [
+            (int)$payPlanId
+        ]);
     }
 
     /**
@@ -1964,26 +1522,10 @@ class ifiSDK
      */
     public function locateCard($cid, $last4)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$cid),
-            php_xmlrpc_encode($last4));
-        return $this->methodCaller("InvoiceService.locateExistingCard", $carray);
-    }
-
-    /**
-     * @method validateCreditCard
-     * @description Validates a Credit Card
-     * @note this will take a CC ID or a CC array
-     * @param mixed $creditCard
-     * @return int
-     */
-    public function validateCard($creditCard)
-    {
-        $creditCard = is_array($creditCard) ? $creditCard : (int)$creditCard;
-
-        $carray = array(
-            php_xmlrpc_encode($creditCard));
-        return $this->methodCaller("InvoiceService.validateCreditCard", $carray);
+        return $this->makeApiCall("InvoiceService.locateExistingCard", [
+            (int)$cid,
+            $last4
+        ]);
     }
 
     /**
@@ -1995,10 +1537,10 @@ class ifiSDK
      */
     public function updateSubscriptionNextBillDate($subscriptionId, $nextBillDate)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$subscriptionId),
-            php_xmlrpc_encode($nextBillDate, array('auto_dates')));
-        return $this->methodCaller("InvoiceService.updateJobRecurringNextBillDate", $carray);
+        return $this->makeApiCall("InvoiceService.updateJobRecurringNextBillDate", [
+            (int)$subscriptionId,
+            $nextBillDate
+        ]);
     }
 
     /**
@@ -2009,9 +1551,9 @@ class ifiSDK
      */
     public function recalculateTax($invoiceId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$invoiceId));
-        return $this->methodCaller("InvoiceService.recalculateTax", $carray);
+        return $this->makeApiCall("InvoiceService.recalculateTax", [
+            (int)$invoiceId
+        ]);
     }
 
     /**
@@ -2142,17 +1684,17 @@ class ifiSDK
      */
     public function placeOrder($contactId, $creditCardId, $payPlanId, $productIds, $subscriptionIds, $processSpecials, $promoCodes, $leadAff = 0, $saleAff = 0)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$contactId),
-            php_xmlrpc_encode((int)$creditCardId),
-            php_xmlrpc_encode((int)$payPlanId),
-            php_xmlrpc_encode($productIds),
-            php_xmlrpc_encode($subscriptionIds),
-            php_xmlrpc_encode($processSpecials),
-            php_xmlrpc_encode($promoCodes),
-            php_xmlrpc_encode((int)$leadAff),
-            php_xmlrpc_encode((int)$saleAff));
-        return $this->methodCaller("OrderService.placeOrder", $carray);
+        return $this->makeApiCall("OrderService.placeOrder", [
+            (int)$contactId,
+            (int)$creditCardId,
+            (int)$payPlanId,
+            $productIds,
+            $subscriptionIds,
+            (boolean)$processSpecials,
+            $promoCodes,
+            (int)$leadAff,
+            (int)$saleAff
+        ]);
     }
 
     /**
@@ -2167,9 +1709,9 @@ class ifiSDK
      */
     public function getInventory($productId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$productId));
-        return $this->methodCaller("ProductService.getInventory", $carray);
+        return $this->makeApiCall("ProductService.getInventory", [
+            (int)$productId
+        ]);
     }
 
     /**
@@ -2180,9 +1722,9 @@ class ifiSDK
      */
     public function incrementInventory($productId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$productId));
-        return $this->methodCaller("ProductService.incrementInventory", $carray);
+        return $this->makeApiCall("ProductService.incrementInventory", [
+            (int)$productId
+        ]);
     }
 
     /**
@@ -2191,11 +1733,11 @@ class ifiSDK
      * @param int $productId
      * @return bool
      */
-    function decrementInventory($productId)
+    public function decrementInventory($productId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$productId));
-        return $this->methodCaller("ProductService.decrementInventory", $carray);
+        return $this->makeApiCall("ProductService.decrementInventory", [
+            (int)$productId
+        ]);
     }
 
     /**
@@ -2207,10 +1749,10 @@ class ifiSDK
      */
     public function increaseInventory($productId, $quantity)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$productId),
-            php_xmlrpc_encode((int)$quantity));
-        return $this->methodCaller("ProductService.increaseInventory", $carray);
+        return $this->makeApiCall("ProductService.increaseInventory", [
+            (int)$productId,
+            (int)$quantity
+        ]);
     }
 
     /**
@@ -2222,10 +1764,10 @@ class ifiSDK
      */
     public function decreaseInventory($productId, $quantity)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$productId),
-            php_xmlrpc_encode((int)$quantity));
-        return $this->methodCaller("ProductService.decreaseInventory", $carray);
+        return $this->makeApiCall("ProductService.decreaseInventory", [
+            (int)$productId,
+            (int)$quantity
+        ]);
     }
 
     /**
@@ -2236,9 +1778,9 @@ class ifiSDK
      */
     public function deactivateCreditCard($creditCardId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$creditCardId));
-        return $this->methodCaller("ProductService.deactivateCreditCard", $carray);
+        return $this->makeApiCall("ProductService.deactivateCreditCard", [
+            (int)$creditCardId
+        ]);
     }
 
     /**
@@ -2255,11 +1797,11 @@ class ifiSDK
      */
     public function savedSearchAllFields($savedSearchId, $userId, $page)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$savedSearchId),
-            php_xmlrpc_encode((int)$userId),
-            php_xmlrpc_encode((int)$page));
-        return $this->methodCaller("SearchService.getSavedSearchResultsAllFields", $carray);
+        return $this->makeApiCall("SearchService.getSavedSearchResultsAllFields", [
+            (int)$savedSearchId,
+            (int)$userId,
+            (int)$page
+        ]);
     }
 
     /**
@@ -2273,12 +1815,12 @@ class ifiSDK
      */
     public function savedSearch($savedSearchId, $userId, $page, $fields)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$savedSearchId),
-            php_xmlrpc_encode((int)$userId),
-            php_xmlrpc_encode((int)$page),
-            php_xmlrpc_encode($fields));
-        return $this->methodCaller("SearchService.getSavedSearchResults", $carray);
+        return $this->makeApiCall("SearchService.getSavedSearchResults", [
+            (int)$savedSearchId,
+            (int)$userId,
+            (int)$page,
+            $fields
+        ]);
     }
 
     /**
@@ -2290,10 +1832,10 @@ class ifiSDK
      */
     public function getAvailableFields($savedSearchId, $userId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$savedSearchId),
-            php_xmlrpc_encode((int)$userId));
-        return $this->methodCaller("SearchService.getAllReportColumns", $carray);
+        return $this->makeApiCall("SearchService.getAllReportColumns", [
+            (int)$savedSearchId,
+            (int)$userId
+        ]);
     }
 
     /**
@@ -2304,9 +1846,9 @@ class ifiSDK
      */
     public function getDefaultQuickSearch($userId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$userId));
-        return $this->methodCaller("SearchService.getDefaultQuickSearch", $carray);
+        return $this->makeApiCall("SearchService.getDefaultQuickSearch", [
+            (int)$userId
+        ]);
     }
 
     /**
@@ -2317,9 +1859,9 @@ class ifiSDK
      */
     public function getQuickSearches($userId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$userId));
-        return $this->methodCaller("SearchService.getAvailableQuickSearches", $carray);
+        return $this->makeApiCall("SearchService.getAvailableQuickSearches", [
+            (int)$userId
+        ]);
     }
 
     /**
@@ -2334,13 +1876,13 @@ class ifiSDK
      */
     public function quickSearch($quickSearchType, $userId, $filterData, $page, $limit)
     {
-        $carray = array(
-            php_xmlrpc_encode($quickSearchType),
-            php_xmlrpc_encode((int)$userId),
-            php_xmlrpc_encode($filterData),
-            php_xmlrpc_encode((int)$page),
-            php_xmlrpc_encode((int)$limit));
-        return $this->methodCaller("SearchService.quickSearch", $carray);
+        return $this->makeApiCall("SearchService.quickSearch", [
+            $quickSearchType,
+            (int)$userId,
+            $filterData,
+            (int)$page,
+            (int)$limit
+        ]);
     }
 
     /**
@@ -2359,12 +1901,12 @@ class ifiSDK
      */
     public function addMoveNotes($ticketList, $moveNotes, $moveToStageId, $notifyIds)
     {
-        $carray = array(
-            php_xmlrpc_encode($ticketList),
-            php_xmlrpc_encode($moveNotes),
-            php_xmlrpc_encode($moveToStageId),
-            php_xmlrpc_encode($notifyIds));
-        return $this->methodCaller("ServiceCallService.addMoveNotes", $carray);
+        return $this->makeApiCall("ServiceCallService.addMoveNotes", [
+            $ticketList,
+            $moveNotes,
+            (int)$moveToStageId,
+            $notifyIds
+        ]);
     }
 
     /**
@@ -2378,12 +1920,12 @@ class ifiSDK
      */
     public function moveTicketStage($ticketID, $ticketStage, $moveNotes, $notifyIds)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$ticketID),
-            php_xmlrpc_encode($ticketStage),
-            php_xmlrpc_encode($moveNotes),
-            php_xmlrpc_encode($notifyIds));
-        return $this->methodCaller("ServiceCallService.moveTicketStage", $carray);
+        return $this->makeApiCall("ServiceCallService.moveTicketStage", [
+            (int)$ticketID,
+            $ticketStage,
+            $moveNotes,
+            $notifyIds
+        ]);
     }
 
     /**
@@ -2397,8 +1939,7 @@ class ifiSDK
      */
     public function getAllShippingOptions()
     {
-        $carray = array();
-        return $this->methodCaller("ShippingService.getAllShippingOptions", $carray);
+        return $this->makeApiCall("ShippingService.getAllShippingOptions", []);
     }
 
     /**
@@ -2408,8 +1949,7 @@ class ifiSDK
      */
     public function getAllConfiguredShippingOptions()
     {
-        $carray = array();
-        return $this->methodCaller("ShippingService.getAllShippingOptions", $carray);
+        return $this->makeApiCall("ShippingService.getAllShippingOptions", []);
     }
 
     /**
@@ -2420,9 +1960,9 @@ class ifiSDK
      */
     public function getFlatRateShippingOption($optionId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$optionId));
-        return $this->methodCaller("ShippingService.getFlatRateShippingOption", $carray);
+        return $this->makeApiCall("ShippingService.getFlatRateShippingOption", [
+            (int)$optionId
+        ]);
     }
 
     /**
@@ -2433,9 +1973,9 @@ class ifiSDK
      */
     public function getOrderTotalShippingOption($optionId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$optionId));
-        return $this->methodCaller("ShippingService.getOrderTotalShippingOption", $carray);
+        return $this->makeApiCall("ShippingService.getOrderTotalShippingOption", [
+            (int)$optionId
+        ]);
     }
 
     /**
@@ -2446,9 +1986,9 @@ class ifiSDK
      */
     public function getOrderTotalShippingRanges($optionId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$optionId));
-        return $this->methodCaller("ShippingService.getOrderTotalShippingRanges", $carray);
+        return $this->makeApiCall("ShippingService.getOrderTotalShippingRanges", [
+            (int)$optionId
+        ]);
     }
 
     /**
@@ -2459,9 +1999,9 @@ class ifiSDK
      */
     public function getProductBasedShippingOption($optionId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$optionId));
-        return $this->methodCaller("ShippingService.getProductBasedShippingOption", $carray);
+        return $this->makeApiCall("ShippingService.getProductBasedShippingOption", [
+            (int)$optionId
+        ]);
     }
 
     /**
@@ -2472,9 +2012,9 @@ class ifiSDK
      */
     public function getProductShippingPricesForProductShippingOption($optionId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$optionId));
-        return $this->methodCaller("ShippingService.getProductShippingPricesForProductShippingOption", $carray);
+        return $this->makeApiCall("ShippingService.getProductShippingPricesForProductShippingOption", [
+            (int)$optionId
+        ]);
     }
 
     /**
@@ -2485,9 +2025,9 @@ class ifiSDK
      */
     public function getOrderQuantityShippingOption($optionId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$optionId));
-        return $this->methodCaller("ShippingService.getOrderQuantityShippingOption", $carray);
+        return $this->makeApiCall("ShippingService.getOrderQuantityShippingOption", [
+            (int)$optionId
+        ]);
     }
 
     /**
@@ -2498,9 +2038,9 @@ class ifiSDK
      */
     public function getWeightBasedShippingOption($optionId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$optionId));
-        return $this->methodCaller("ShippingService.getWeightBasedShippingOption", $carray);
+        return $this->makeApiCall("ShippingService.getWeightBasedShippingOption", [
+            (int)$optionId
+        ]);
     }
 
     /**
@@ -2511,9 +2051,9 @@ class ifiSDK
      */
     public function getWeightBasedShippingRanges($optionId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$optionId));
-        return $this->methodCaller("ShippingService.getWeightBasedShippingRanges", $carray);
+        return $this->makeApiCall("ShippingService.getWeightBasedShippingRanges", [
+            (int)$optionId
+        ]);
     }
 
     /**
@@ -2524,9 +2064,9 @@ class ifiSDK
      */
     public function getUpsShippingOption($optionId)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$optionId));
-        return $this->methodCaller("ShippingService.getUpsShippingOption", $carray);
+        return $this->makeApiCall("ShippingService.getUpsShippingOption", [
+            (int)$optionId
+        ]);
     }
 
     /**
@@ -2540,8 +2080,7 @@ class ifiSDK
      */
     public function getWebFormMap()
     {
-        $carray = array();
-        return $this->methodCaller("WebFormService.getMap", $carray);
+        return $this->makeApiCall("WebFormService.getMap", []);
     }
 
     /**
@@ -2552,9 +2091,9 @@ class ifiSDK
      */
     public function getWebFormHtml($webFormId = 0)
     {
-        $carray = array(
-            php_xmlrpc_encode((int)$webFormId));
-        return $this->methodCaller("WebFormService.getHTML", $carray);
+        return $this->makeApiCall("WebFormService.getHTML", [
+            (int)$webFormId
+        ]);
     }
 
     /**
@@ -2568,8 +2107,7 @@ class ifiSDK
      */
     public function getWebTrackingServiceTag()
     {
-        $carray = array();
-        return $this->methodCaller("WebTrackingService.getWebTrackingScriptTag", $carray);
+        return $this->makeApiCall("WebTrackingService.getWebTrackingScriptTag", []);
     }
 
     /**
@@ -2579,8 +2117,52 @@ class ifiSDK
      */
     public function getWebTrackingScriptUrl()
     {
-        $carray = array();
-        return $this->methodCaller("WebTrackingService.getWebTrackingScriptUrl", $carray);
+        return $this->makeApiCall("WebTrackingService.getWebTrackingScriptUrl", []);
+    }
+
+    /**
+     * @method getProduct
+     * @description retrieves a product from Infusionsoft
+     */
+    public function getProduct($productId, $includeInventory = false)
+    {
+        return $this->makeApiCall("ProductService.getProduct", [
+            (int)$productId,
+            (boolean)$includeInventory
+        ]);
+    }
+
+    /**
+     * @method getAllProducts
+     * @description retrieves all products
+     */
+    public function getAllProducts($includeInventory = false)
+    {
+        return $this->makeApiCall("ProductService.getAllProducts", [
+            (boolean)$includeInventory
+        ]);
+    }
+
+    /**
+     * @method getSubscriptionPlans
+     * @description gets all subscription plans
+     */
+    public function getSubscriptionPlans($productId)
+    {
+        return $this->makeApiCall("ProductService.getSubscriptionPlans", [
+            (int)$productId
+        ]);
+    }
+
+    /**
+     * @method getOptStatus
+     * @description gets opt status for an email address
+     */
+    public function getOptStatus($email)
+    {
+        return $this->makeApiCall("APIEmailService.getOptStatus", [
+            $email
+        ]);
     }
 
 }
