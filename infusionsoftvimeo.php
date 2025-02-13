@@ -169,13 +169,13 @@ function iv_settings_section_callback() {
 
 function iv_subdomain_render() {
 	$options = get_option('iv_settings');
-	$subdomain = isset($options['subdomain']) ? $options['subdomain'] : 'lc299';
+	$subdomain = isset($options['subdomain']) ? $options['subdomain'] : '';
 	echo '<input type="text" name="iv_settings[subdomain]" value="' . esc_attr($subdomain) . '">';
 }
 
 function iv_api_key_render() {
 	$options = get_option('iv_settings');
-	$api_key = isset($options['api_key']) ? $options['api_key'] : 'KeapAK-a71db0d082bfb2f08503622b08592b3043342a7e28c6aee37c';
+	$api_key = isset($options['api_key']) ? $options['api_key'] : '';
 	echo '<input type="text" size="50" name="iv_settings[api_key]" value="' . esc_attr($api_key) . '">';
 }
 

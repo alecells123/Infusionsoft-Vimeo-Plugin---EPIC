@@ -13,8 +13,8 @@ function cfg_debug_log($message, $data = null) {
 
 // Get settings from WordPress options
 $iv_settings = get_option('iv_settings', [
-    'subdomain' => 'lc299',
-    'api_key' => 'KeapAK-a71db0d082bfb2f08503622b08592b3043342a7e28c6aee37c'
+    'subdomain' => '',
+    'api_key' => ''
 ]);
 
 // Define constants if they're not already defined (allows for hardcoded values in wp-config.php)
