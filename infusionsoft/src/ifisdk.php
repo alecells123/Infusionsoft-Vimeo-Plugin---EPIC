@@ -2131,21 +2131,4 @@ class ifiSDK {
 
 }
 
-function test_infusionsoft_connection_callback() {
-    try {
-        $infusionsoft = new ifiSDK();
-        $connected = $infusionsoft->cfgCon('connection');
-        
-        wp_send_json_success([
-            'message' => 'Connection successful!'
-        ]);
-    } catch (Exception $e) {
-        wp_send_json_error([
-            'message' => 'Error: ' . $e->getMessage()
-        ]);
-    }
-    
-    wp_die();
-}
-
 ?>
