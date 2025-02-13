@@ -3,12 +3,38 @@
 Plugin Name: Infusionsoft Vimeo for EPIC Entertainment
 Plugin URI: https://wordpress.org/
 Description: For tracking vimeo video process in infusionsoft.
-Version: 1.1
+Version: 1.1.0
 Author: Wordpress; updated by Alec Ellsworth
 Author URI: https://wordpress.org/
 License: GPLv2 or later
 Text Domain: infusionsoft-vimeo
 */
+
+// Add after plugin header
+define('IV_VERSION', '1.1.0');
+
+// Add activation hook
+register_activation_hook(__FILE__, 'iv_activate');
+
+function iv_activate() {
+	$old_version = get_option('iv_version', '0.0.0');
+	
+	if (version_compare($old_version, IV_VERSION, '<')) {
+		// Perform any necessary upgrades here
+		
+		// Update version in database
+		update_option('iv_version', IV_VERSION);
+	}
+}
+
+// Add upgrade check on plugins loaded
+add_action('plugins_loaded', 'iv_check_version');
+
+function iv_check_version() {
+	if (get_option('iv_version') !== IV_VERSION) {
+		iv_activate();
+	}
+}
 
 add_action('wp_enqueue_scripts', 'iv_enqueued_assets');
 
