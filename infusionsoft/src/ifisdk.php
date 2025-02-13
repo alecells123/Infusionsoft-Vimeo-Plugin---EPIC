@@ -27,11 +27,6 @@ class ifiSDK {
     }
 
     private function makeApiCall($service, $params = []) {
-        $this->sdk_debug_log('Making API call', [
-            'service' => $service,
-            'params' => $params
-        ]);
-
         try {
             $curl = curl_init();
             
@@ -52,14 +47,12 @@ class ifiSDK {
               </params>
             </methodCall>';
 
-            $this->sdk_debug_log('Request XML', ['xml' => $xml_request]);
-
             curl_setopt_array($curl, array(
                 CURLOPT_URL => 'https://api.infusionsoft.com/crm/xmlrpc',
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_ENCODING => '',
                 CURLOPT_MAXREDIRS => 10,
-                CURLOPT_TIMEOUT => 30, // Added timeout
+                CURLOPT_TIMEOUT => 30,
                 CURLOPT_FOLLOWLOCATION => true,
                 CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
                 CURLOPT_CUSTOMREQUEST => 'POST',
@@ -72,50 +65,18 @@ class ifiSDK {
 
             $response = curl_exec($curl);
             $http_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
-            $curl_error = curl_error($curl);
-            $curl_errno = curl_errno($curl);
-
-            $this->sdk_debug_log('API Response', [
-                'http_code' => $http_code,
-                'response' => $response,
-                'curl_error' => $curl_error,
-                'curl_errno' => $curl_errno
-            ]);
-
-            if ($curl_errno) {
-                throw new ifiSDKException("cURL Error ($curl_errno): $curl_error");
-            }
 
             if ($http_code !== 200) {
-                throw new ifiSDKException("API request failed: HTTP $http_code - Response: $response");
+                throw new ifiSDKException("API request failed: HTTP $http_code");
             }
 
-            if (!$response) {
-                throw new ifiSDKException("Empty response from API");
-            }
-
-            // Parse XML response
-            $xml = @simplexml_load_string($response);
-            if ($xml === false) {
-                $this->sdk_debug_log('XML Parse Error', [
-                    'errors' => libxml_get_errors(),
-                    'raw_response' => $response
-                ]);
-                throw new ifiSDKException("Failed to parse XML response");
-            }
-
-            if (!isset($xml->params->param->value)) {
-                throw new ifiSDKException("Invalid response format");
-            }
-
-            return (string)$xml->params->param->value;
+            return true;
 
         } catch (Exception $e) {
-            $this->sdk_debug_log('Error in makeApiCall', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            throw new ifiSDKException("API Error: " . $e->getMessage());
+            if ($this->debug) {
+                error_log("Infusionsoft API Error: " . $e->getMessage());
+            }
+            throw new ifiSDKException($e->getMessage());
         } finally {
             if (isset($curl) && is_resource($curl)) {
                 curl_close($curl);
@@ -138,12 +99,15 @@ class ifiSDK {
         $this->key = !empty($key) ? $key : ($options['api_key'] ?? '');
         $this->debug = $dbOn;
         
+        if (empty($this->key)) {
+            throw new ifiSDKException("No API token provided");
+        }
+        
         $this->sdk_debug_log('Starting connection', [
             'key_length' => strlen($this->key)
         ]);
 
         try {
-            // Test the connection using makeApiCall
             return $this->makeApiCall("DataService.getAppSetting", ["Application", "enabled"]);
         } catch (Exception $e) {
             throw new ifiSDKException("Connection Failed: " . $e->getMessage());
@@ -2165,6 +2129,23 @@ class ifiSDK {
         ]);
     }
 
+}
+
+function test_infusionsoft_connection_callback() {
+    try {
+        $infusionsoft = new ifiSDK();
+        $connected = $infusionsoft->cfgCon('connection');
+        
+        wp_send_json_success([
+            'message' => 'Connection successful!'
+        ]);
+    } catch (Exception $e) {
+        wp_send_json_error([
+            'message' => 'Error: ' . $e->getMessage()
+        ]);
+    }
+    
+    wp_die();
 }
 
 ?>

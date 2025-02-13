@@ -140,7 +140,7 @@ jQuery(function($){
 					   
 					jQuery.post(vimeo_ajax_object.ajax_url, data, function(response) {
 						console.log('Got this from the server: ' + response.tagged);
-						console.log('Data: ' + data.vimeovideoid);
+						console.log('Video ID: ' + vimeovideoid);
 						if(response.tagged==true) {
 							var vidtags = document.cookie.replace(/(?:(?:^|.*;\s*)contactTags\s*\=\s*([^;]*).*$)|^.*$/, "$1");
 							if(vidtags) {
