@@ -19,6 +19,38 @@ register_activation_hook(__FILE__, 'iv_activate');
 function iv_activate() {
 	$old_version = get_option('iv_version', '0.0.0');
 	
+	// Set up default video IDs and tags if they don't exist
+	$default_videos = array(
+		1 => '456216629',  // Add your actual video IDs here
+		// ... add other video IDs
+	);
+	
+	$default_tags = array(
+		1 => array(
+			'25' => '1234',  // Add your actual tag IDs here
+			'50' => '5678',
+			'75' => '9012',
+			'100' => '3456'
+		),
+		// ... add other video tag sets
+	);
+	
+	// Set up videos and tags
+	foreach($default_videos as $i => $video_id) {
+		if (!get_option('iv_vimeo_id_'.$i)) {
+			update_option('iv_vimeo_id_'.$i, $video_id);
+		}
+	}
+	
+	foreach($default_tags as $i => $tags) {
+		if (!get_option('iv_25_tag_'.$i)) {
+			update_option('iv_25_tag_'.$i, $tags['25']);
+			update_option('iv_50_tag_'.$i, $tags['50']);
+			update_option('iv_75_tag_'.$i, $tags['75']);
+			update_option('iv_100_tag_'.$i, $tags['100']);
+		}
+	}
+	
 	if (version_compare($old_version, IV_VERSION, '<')) {
 		// Perform any necessary upgrades here
 		
@@ -59,7 +91,8 @@ function vimeo_action_callback() {
 	global $i4w;
 	$INFUSIONSOFT_SUBDOMAIN = get_option('iv_subdomain');
 	$INFUSIONSFT_KEY = get_option('iv_key');
-	$result["tagged"] = 0;  // Initialize with 0, not false
+	$result["tagged"] = 0;
+	$result["debug"] = [];
 
 	if($INFUSIONSOFT_SUBDOMAIN && $INFUSIONSFT_KEY) {
 		define('INFUSIONSOFT_SUBDOMAIN', $INFUSIONSOFT_SUBDOMAIN);
@@ -72,6 +105,12 @@ function vimeo_action_callback() {
 			$videoid = $_POST['videoid'];
 			$percent = $_POST['percent'];
 			$contactid = $_POST['contactid'];
+			
+			$result["debug"]["inputs"] = [
+				"videoid" => $videoid,
+				"percent" => $percent,
+				"contactid" => $contactid
+			];
 
 			if($videoid && $percent && $contactid) {
 				$vimeovideoids = array();
@@ -89,24 +128,37 @@ function vimeo_action_callback() {
 				}
 
 				$vimeoidkey = array_search($videoid, $vimeovideoids);
+				$result["debug"]["video_lookup"] = [
+					"found_key" => $vimeoidkey,
+					"video_ids" => $vimeovideoids
+				];
 
 				if($vimeoidkey) {
 					if($percent == 100) {
 						$tagid = $percent100tags[$vimeoidkey];
 					}
-					if($percent >= 75) {
+					if($percent == 75) {
 						$tagid = $percent75tags[$vimeoidkey];
 					}
-					if($percent >= 50) {
+					if($percent == 50) {
 						$tagid = $percent50tags[$vimeoidkey];
 					}
-					if($percent >= 25) {
+					if($percent == 25) {
 						$tagid = $percent25tags[$vimeoidkey];
 					}
+					
+					$result["debug"]["tag_selection"] = [
+						"percent" => $percent,
+						"selected_tagid" => $tagid
+					];
 
 					if($tagid) {
-						$result['tagged'] = $app->grpAssign($contactid, $tagid);
+						$assign_result = $app->grpAssign($contactid, $tagid);
+						$result['tagged'] = $assign_result;
 						$result['tagid'] = $tagid;
+						$result["debug"]["tag_assignment"] = [
+							"assign_result" => $assign_result
+						];
 					}
 				}
 			}
