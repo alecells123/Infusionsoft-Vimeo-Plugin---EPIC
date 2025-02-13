@@ -43,7 +43,7 @@ function iv_enqueued_assets() {
 	
 	wp_enqueue_script('vimeo-player-script', 'https://player.vimeo.com/api/player.js', array('jquery'), null, true);
 	
-	wp_enqueue_script('vimeo-infusionsoft-script', plugin_dir_url(__FILE__) . 'js/iv-script.js', array('jquery', 'vimeo-player-script'), '2.2', true);
+	wp_enqueue_script('vimeo-infusionsoft-script', plugin_dir_url(__FILE__) . 'js/iv-script.js', array('jquery', 'vimeo-player-script'), '2.1', true);
 	
 	wp_localize_script('vimeo-infusionsoft-script', 'vimeo_ajax_object', array(
 		'ajax_url' => admin_url('admin-ajax.php'),
@@ -57,6 +57,9 @@ add_action('wp_ajax_nopriv_vimeo_action', 'vimeo_action_callback');
 
 function vimeo_action_callback() {
 	global $i4w;
+	
+	// Initialize result array
+	$result = ['tagged' => false];
 	
 	// Get settings
 	$options = get_option('iv_settings', []);
@@ -113,13 +116,12 @@ function vimeo_action_callback() {
 				}
 			}
 		}
+		
+		wp_send_json($result);
+		
 	} catch (Exception $e) {
 		wp_send_json_error(['message' => $e->getMessage()]);
-		return;
 	}
-	
-	echo json_encode($result);
-	wp_die();
 }
 
 // Settings page
