@@ -19,48 +19,13 @@ register_activation_hook(__FILE__, 'iv_activate');
 function iv_activate() {
 	$old_version = get_option('iv_version', '0.0.0');
 	
-	// Set up default video IDs and tags if they don't exist
-	$default_videos = array(
-		1 => '456216629',  // Add your actual video IDs here
-		// ... add other video IDs
-	);
-	
-	$default_tags = array(
-		1 => array(
-			'25' => '1234',  // Add your actual tag IDs here
-			'50' => '5678',
-			'75' => '9012',
-			'100' => '3456'
-		),
-		// ... add other video tag sets
-	);
-	
-	// Set up videos and tags
-	foreach($default_videos as $i => $video_id) {
-		if (!get_option('iv_vimeo_id_'.$i)) {
-			update_option('iv_vimeo_id_'.$i, $video_id);
-		}
-	}
-	
-	foreach($default_tags as $i => $tags) {
-		if (!get_option('iv_25_tag_'.$i)) {
-			update_option('iv_25_tag_'.$i, $tags['25']);
-			update_option('iv_50_tag_'.$i, $tags['50']);
-			update_option('iv_75_tag_'.$i, $tags['75']);
-			update_option('iv_100_tag_'.$i, $tags['100']);
-		}
-	}
-	
 	if (version_compare($old_version, IV_VERSION, '<')) {
-		// Perform any necessary upgrades here
-		
-		// Update version in database
 		update_option('iv_version', IV_VERSION);
 	}
 }
 
 // Add upgrade check on plugins loaded
-add_action('test_infusionsoft_connection_callbackplugins_loaded', 'iv_check_version');
+add_action('plugins_loaded', 'iv_check_version');
 
 function iv_check_version() {
 	if (get_option('iv_version') !== IV_VERSION) {
@@ -89,77 +54,50 @@ add_action('wp_ajax_nopriv_vimeo_action', 'vimeo_action_callback');
 
 function vimeo_action_callback() {
 	global $i4w;
-	$INFUSIONSOFT_SUBDOMAIN = get_option('iv_subdomain');
-	$INFUSIONSFT_KEY = get_option('iv_key');
 	$result["tagged"] = 0;
-	$result["debug"] = [];
+	
+	$options = get_option('iv_settings');
+	
+	if (empty($options)) {
+		echo json_encode($result);
+		wp_die();
+	}
 
-	if($INFUSIONSOFT_SUBDOMAIN && $INFUSIONSFT_KEY) {
-		define('INFUSIONSOFT_SUBDOMAIN', $INFUSIONSOFT_SUBDOMAIN);
-		define('INFUSIONSFT_KEY', $INFUSIONSFT_KEY);
+	include(plugin_dir_path(__FILE__) . 'infusionsoft/src/ifisdk.php');    
+	$app = new ifiSDK;
 
-		include(plugin_dir_path(__FILE__) . 'infusionsoft/src/ifisdk.php');    
-		$app = new ifiSDK;
+	if($app->cfgCon("connection")) {
+		$videoid = $_POST['videoid'];
+		$percent = $_POST['percent'];
+		$contactid = $_POST['contactid'];
 
-		if($app->cfgCon("connection")) {
-			$videoid = $_POST['videoid'];
-			$percent = $_POST['percent'];
-			$contactid = $_POST['contactid'];
-			
-			$result["debug"]["inputs"] = [
-				"videoid" => $videoid,
-				"percent" => $percent,
-				"contactid" => $contactid
-			];
+		if($videoid && $percent && $contactid) {
+			// Find which video number matches this video ID
+			$video_number = 0;
+			for($i = 1; $i <= 5; $i++) {
+				if($options['video_' . $i . '_id'] == $videoid) {
+					$video_number = $i;
+					break;
+				}
+			}
 
-			if($videoid && $percent && $contactid) {
-				$vimeovideoids = array();
-				$percent25tags = array();
-				$percent50tags = array();
-				$percent75tags = array();
-				$percent100tags = array();
-
-				for($i=1; $i<=25; $i++) {
-					$vimeovideoids[$i] = get_option('iv_vimeo_id_'.$i);
-					$percent25tags[$i] = get_option('iv_25_tag_'.$i);
-					$percent50tags[$i] = get_option('iv_50_tag_'.$i);
-					$percent75tags[$i] = get_option('iv_75_tag_'.$i);
-					$percent100tags[$i] = get_option('iv_100_tag_'.$i);
+			if($video_number > 0) {
+				if($percent == 100) {
+					$tagid = $options['video_' . $video_number . '_100_tag'];
+				}
+				if($percent == 75) {
+					$tagid = $options['video_' . $video_number . '_75_tag'];
+				}
+				if($percent == 50) {
+					$tagid = $options['video_' . $video_number . '_50_tag'];
+				}
+				if($percent == 25) {
+					$tagid = $options['video_' . $video_number . '_25_tag'];
 				}
 
-				$vimeoidkey = array_search($videoid, $vimeovideoids);
-				$result["debug"]["video_lookup"] = [
-					"found_key" => $vimeoidkey,
-					"video_ids" => $vimeovideoids
-				];
-
-				if($vimeoidkey) {
-					if($percent == 100) {
-						$tagid = $percent100tags[$vimeoidkey];
-					}
-					if($percent == 75) {
-						$tagid = $percent75tags[$vimeoidkey];
-					}
-					if($percent == 50) {
-						$tagid = $percent50tags[$vimeoidkey];
-					}
-					if($percent == 25) {
-						$tagid = $percent25tags[$vimeoidkey];
-					}
-					
-					$result["debug"]["tag_selection"] = [
-						"percent" => $percent,
-						"selected_tagid" => $tagid
-					];
-
-					if($tagid) {
-						$assign_result = $app->grpAssign($contactid, $tagid);
-						$result['tagged'] = $assign_result;
-						$result['tagid'] = $tagid;
-						$result["debug"]["tag_assignment"] = [
-							"assign_result" => $assign_result
-						];
-					}
+				if($tagid) {
+					$result['tagged'] = $app->grpAssign($contactid, $tagid);
+					$result['tagid'] = $tagid;
 				}
 			}
 		}
@@ -186,31 +124,52 @@ function iv_add_admin_menu() {
 function iv_settings_init() {
 	register_setting('iv_settings', 'iv_settings');
 
+	// API Settings Section
 	add_settings_section(
-		'iv_settings_section',
+		'iv_api_section',
 		'API Settings',
-		'iv_settings_section_callback',
+		'iv_api_section_callback',
 		'infusionsoft_vimeo'
 	);
 
 	add_settings_field(
 		'iv_subdomain',
-		'Infusionsoft Subdomain',
+		'Subdomain',
 		'iv_subdomain_render',
 		'infusionsoft_vimeo',
-		'iv_settings_section'
+		'iv_api_section'
 	);
 
 	add_settings_field(
 		'iv_api_key',
-		'Service Account Key',
+		'API Key',
 		'iv_api_key_render',
 		'infusionsoft_vimeo',
-		'iv_settings_section'
+		'iv_api_section'
 	);
+
+	// Video Settings Section
+	add_settings_section(
+		'iv_video_section',
+		'Video Settings',
+		'iv_video_section_callback',
+		'infusionsoft_vimeo'
+	);
+
+	// Add fields for all 5 videos
+	for($i = 1; $i <= 5; $i++) {
+		add_settings_field(
+			'video_' . $i,
+			'Video ' . $i,
+			'iv_video_fields_render',
+			'infusionsoft_vimeo',
+			'iv_video_section',
+			['video_number' => $i]
+		);
+	}
 }
 
-function iv_settings_section_callback() {
+function iv_api_section_callback() {
 	echo 'Configure your Keap/Infusionsoft API settings';
 }
 
@@ -224,6 +183,50 @@ function iv_api_key_render() {
 	$options = get_option('iv_settings');
 	$api_key = isset($options['api_key']) ? $options['api_key'] : '';
 	echo '<input type="text" size="50" name="iv_settings[api_key]" value="' . esc_attr($api_key) . '">';
+}
+
+function iv_video_section_callback() {
+	echo 'Configure your 5 Vimeo videos and their corresponding Infusionsoft tags:';
+}
+
+function iv_video_fields_render($args) {
+	$options = get_option('iv_settings');
+	$n = $args['video_number'];
+	?>
+	<div class="video-settings" style="margin-bottom: 20px; padding: 10px; background: #f9f9f9; border: 1px solid #ddd;">
+		<h4>Video <?php echo $n; ?></h4>
+		<p>
+			<label style="display: inline-block; width: 100px;">Vimeo ID:</label>
+			<input type="text" name="iv_settings[video_<?php echo $n; ?>_id]" 
+				   value="<?php echo isset($options['video_' . $n . '_id']) ? esc_attr($options['video_' . $n . '_id']) : ''; ?>"
+				   style="width: 200px;">
+		</p>
+		<p>
+			<label style="display: inline-block; width: 100px;">25% Tag:</label>
+			<input type="text" name="iv_settings[video_<?php echo $n; ?>_25_tag]" 
+				   value="<?php echo isset($options['video_' . $n . '_25_tag']) ? esc_attr($options['video_' . $n . '_25_tag']) : ''; ?>"
+				   style="width: 200px;">
+		</p>
+		<p>
+			<label style="display: inline-block; width: 100px;">50% Tag:</label>
+			<input type="text" name="iv_settings[video_<?php echo $n; ?>_50_tag]" 
+				   value="<?php echo isset($options['video_' . $n . '_50_tag']) ? esc_attr($options['video_' . $n . '_50_tag']) : ''; ?>"
+				   style="width: 200px;">
+		</p>
+		<p>
+			<label style="display: inline-block; width: 100px;">75% Tag:</label>
+			<input type="text" name="iv_settings[video_<?php echo $n; ?>_75_tag]" 
+				   value="<?php echo isset($options['video_' . $n . '_75_tag']) ? esc_attr($options['video_' . $n . '_75_tag']) : ''; ?>"
+				   style="width: 200px;">
+		</p>
+		<p>
+			<label style="display: inline-block; width: 100px;">100% Tag:</label>
+			<input type="text" name="iv_settings[video_<?php echo $n; ?>_100_tag]" 
+				   value="<?php echo isset($options['video_' . $n . '_100_tag']) ? esc_attr($options['video_' . $n . '_100_tag']) : ''; ?>"
+				   style="width: 200px;">
+		</p>
+	</div>
+	<?php
 }
 
 // Add test connection button handler
