@@ -3,7 +3,7 @@
 Plugin Name: Infusionsoft Vimeo for EPIC Entertainment
 Plugin URI: https://wordpress.org/
 Description: For tracking vimeo video process in infusionsoft.
-Version: 1.1.0
+Version: 1.1.1
 Author: Wordpress; updated by Alec Ellsworth
 Author URI: https://wordpress.org/
 License: GPLv2 or later
@@ -11,7 +11,7 @@ Text Domain: infusionsoft-vimeo
 */
 
 // Add after plugin header
-define('IV_VERSION', '1.1.0');
+define('IV_VERSION', '1.1.1');
 
 // Add activation hook
 register_activation_hook(__FILE__, 'iv_activate');
@@ -28,7 +28,7 @@ function iv_activate() {
 }
 
 // Add upgrade check on plugins loaded
-add_action('plugins_loaded', 'iv_check_version');
+add_action('test_infusionsoft_connection_callbackplugins_loaded', 'iv_check_version');
 
 function iv_check_version() {
 	if (get_option('iv_version') !== IV_VERSION) {
@@ -43,7 +43,7 @@ function iv_enqueued_assets() {
 	
 	wp_enqueue_script('vimeo-player-script', 'https://player.vimeo.com/api/player.js', array('jquery'), null, true);
 	
-	wp_enqueue_script('vimeo-infusionsoft-script', plugin_dir_url(__FILE__) . 'js/iv-script.js', array('jquery', 'vimeo-player-script'), '2.1', true);
+	wp_enqueue_script('vimeo-infusionsoft-script', plugin_dir_url(__FILE__) . 'js/iv-script.js', array('jquery', 'vimeo-player-script'), '2.2', true);
 	
 	wp_localize_script('vimeo-infusionsoft-script', 'vimeo_ajax_object', array(
 		'ajax_url' => admin_url('admin-ajax.php'),

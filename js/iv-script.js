@@ -129,35 +129,51 @@ jQuery(function($){
 					// }
 				}
 				
-				function sendAjaxRequest(percent)
-				{						
+				function sendAjaxRequest(percent) {
 					var data = {
-								'action': 'vimeo_action',
-								'videoid': vimeovideoid,
-								'contactid': contactid,
-								'percent': parseInt(percent)
-							   };
+						'action': 'vimeo_action',
+						'videoid': vimeovideoid,
+						'contactid': contactid,
+						'percent': parseInt(percent)
+					};
 					   
 					jQuery.post(vimeo_ajax_object.ajax_url, data, function(response) {
-						console.log('Got this from the server: ' + response.tagged);
-						console.log('Video ID: ' + vimeovideoid);
-						if(response.tagged==true) {
-							var vidtags = document.cookie.replace(/(?:(?:^|.*;\s*)contactTags\s*\=\s*([^;]*).*$)|^.*$/, "$1");
-							if(vidtags) {
-								if(vidtags.indexOf(response.tagid)==-1) {
-									document.cookie = "contactTags="+ vidtags + ',' + response.tagid;
-								}
-							} else {
-								document.cookie = "contactTags="+ response.tagid;
-							}
-							if($(iframe).parents('.videoWrapper').hasClass('red-border')) {
-								$(iframe).parents('.videoWrapper').removeClass('red-border').addClass('green-border played');
-							}
-							if($(iframe).parents('.tab-pane').find('.vid-text').hasClass('vid-red')) {
-								$(iframe).parents('.tab-pane').find('.vid-text').removeClass('vid-red').addClass('vid-green').html('(You Have Completed this Video)');
+						// Parse response if it's a string
+						if (typeof response === 'string') {
+							try {
+								response = JSON.parse(response);
+							} catch (e) {
+								console.log('Error parsing response:', e);
+								return;
 							}
 						}
-					}, 'json');
+
+						// Safely check for tagged property
+						if (response && response.tagged) {
+							console.log('Got this from the server: ' + response.tagged);
+							console.log('Video ID: ' + vimeovideoid);
+							
+							var vidtags = document.cookie.replace(/(?:(?:^|.*;\s*)contactTags\s*\=\s*([^;]*).*$)|^.*$/, "$1");
+							if (vidtags) {
+								if (vidtags.indexOf(response.tagid) == -1) {
+									document.cookie = "contactTags=" + vidtags + ',' + response.tagid;
+								}
+							} else {
+								document.cookie = "contactTags=" + response.tagid;
+							}
+							
+							if ($(iframe).parents('.videoWrapper').hasClass('red-border')) {
+								$(iframe).parents('.videoWrapper').removeClass('red-border').addClass('green-border played');
+							}
+							if ($(iframe).parents('.tab-pane').find('.vid-text').hasClass('vid-red')) {
+								$(iframe).parents('.tab-pane').find('.vid-text').removeClass('vid-red').addClass('vid-green').html('(You Have Completed this Video)');
+							}
+						} else {
+							console.log('Invalid response structure:', response);
+						}
+					}, 'json').fail(function(jqXHR, textStatus, errorThrown) {
+						console.log('AJAX request failed:', textStatus, errorThrown);
+					});
 				}
 			}
 		});
