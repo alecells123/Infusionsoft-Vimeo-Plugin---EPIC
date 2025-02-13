@@ -57,31 +57,21 @@ add_action('wp_ajax_nopriv_vimeo_action', 'vimeo_action_callback');
 
 function vimeo_action_callback() {
 	global $i4w;
-	
-	// Initialize result array
-	$result = ['tagged' => false];
-	
-	// Debug logging
-	error_log("Vimeo Action Request: " . print_r($_POST, true));
-	
-	// Get settings
-	$options = get_option('iv_settings', []);
-	
-	if (empty($options['api_key'])) {
-		wp_send_json_error(['message' => 'API key not configured']);
-		return;
-	}
+	$INFUSIONSOFT_SUBDOMAIN = get_option('iv_subdomain');
+	$INFUSIONSFT_KEY = get_option('iv_key');
+	$result["tagged"] = 0;  // Initialize with 0, not false
 
-	try {
+	if($INFUSIONSOFT_SUBDOMAIN && $INFUSIONSFT_KEY) {
+		define('INFUSIONSOFT_SUBDOMAIN', $INFUSIONSOFT_SUBDOMAIN);
+		define('INFUSIONSFT_KEY', $INFUSIONSFT_KEY);
+
 		include(plugin_dir_path(__FILE__) . 'infusionsoft/src/ifisdk.php');    
 		$app = new ifiSDK;
-		
-		if($app->cfgCon("connection", $options['api_key'])) {
+
+		if($app->cfgCon("connection")) {
 			$videoid = $_POST['videoid'];
 			$percent = $_POST['percent'];
 			$contactid = $_POST['contactid'];
-
-			error_log("Processing video: ID=$videoid, Percent=$percent, Contact=$contactid");
 
 			if($videoid && $percent && $contactid) {
 				$vimeovideoids = array();
@@ -98,41 +88,33 @@ function vimeo_action_callback() {
 					$percent100tags[$i] = get_option('iv_100_tag_'.$i);
 				}
 
-				error_log("Video IDs found: " . print_r($vimeovideoids, true));
-				
 				$vimeoidkey = array_search($videoid, $vimeovideoids);
-				error_log("Video key found: $vimeoidkey");
 
 				if($vimeoidkey) {
-					$tagid = null;
-					if($percent >= 100) {
+					if($percent == 100) {
 						$tagid = $percent100tags[$vimeoidkey];
-					} elseif($percent >= 75) {
+					}
+					if($percent >= 75) {
 						$tagid = $percent75tags[$vimeoidkey];
-					} elseif($percent >= 50) {
+					}
+					if($percent >= 50) {
 						$tagid = $percent50tags[$vimeoidkey];
-					} elseif($percent >= 25) {
+					}
+					if($percent >= 25) {
 						$tagid = $percent25tags[$vimeoidkey];
 					}
-
-					error_log("Tag ID selected: $tagid for percent: $percent");
 
 					if($tagid) {
 						$result['tagged'] = $app->grpAssign($contactid, $tagid);
 						$result['tagid'] = $tagid;
-						error_log("Tag assignment result: " . ($result['tagged'] ? 'success' : 'failed'));
 					}
 				}
 			}
 		}
-		
-		error_log("Sending response: " . print_r($result, true));
-		wp_send_json($result);
-		
-	} catch (Exception $e) {
-		error_log("Error in vimeo_action_callback: " . $e->getMessage());
-		wp_send_json_error(['message' => $e->getMessage()]);
 	}
+	
+	echo json_encode($result);
+	wp_die();
 }
 
 // Settings page
