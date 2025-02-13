@@ -54,7 +54,7 @@ add_action('wp_ajax_nopriv_vimeo_action', 'vimeo_action_callback');
 
 function vimeo_action_callback() {
 	global $i4w;
-	$result["tagged"] = 0;
+	$result["tagged"] = false;
 	
 	$options = get_option('iv_settings');
 	
@@ -96,7 +96,7 @@ function vimeo_action_callback() {
 				}
 
 				if($tagid) {
-					$result['tagged'] = $app->grpAssign($contactid, $tagid);
+					$result['tagged'] = (bool)$app->grpAssign($contactid, $tagid);
 					$result['tagid'] = $tagid;
 				}
 			}

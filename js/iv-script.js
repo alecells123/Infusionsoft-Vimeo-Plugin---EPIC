@@ -30,7 +30,7 @@ jQuery(function($){
 				function onFinish(data) {
 					if(!hundreddone)
 					{
-						sendAjaxRequest(100);
+						sendAjaxRequest(100, vimeovideoid, contactid, iframe);
 						hundreddone = true;
 					}
 										
@@ -43,21 +43,21 @@ jQuery(function($){
 					
 					if((playedpercent >= 25) && (playedpercent < 50) && (!twentyfivedone))
 					{
-						sendAjaxRequest(25);
+						sendAjaxRequest(25, vimeovideoid, contactid, iframe);
 						twentyfivedone = true;
 					}
 					if((playedpercent >= 50) && (playedpercent < 75) && (!fiftydone))
 					{
-						sendAjaxRequest(50);
+						sendAjaxRequest(50, vimeovideoid, contactid, iframe);
 						fiftydone = true;
 					}
 					if((playedpercent >= 75) && (playedpercent < 100) && (!seventyfivedone))
 					{
-						sendAjaxRequest(75);
+						sendAjaxRequest(75, vimeovideoid, contactid, iframe);
 						seventyfivedone = true;
 					}
 					
-					// 06.11 THE GREAT FIX
+					// Video unlocking logic
 					if(seventyfivedone) {
 						var vidtags = document.cookie.replace(/(?:(?:^|.*;\s*)contactTags\s*\=\s*([^;]*).*$)|^.*$/, "$1");
 						if(vidtags) {
@@ -129,33 +129,44 @@ jQuery(function($){
 					// }
 				}
 				
-				function sendAjaxRequest(percent) {
+				function sendAjaxRequest(percent, videoid, contactid, iframe) {
 					var data = {
 						'action': 'vimeo_action',
-						'videoid': vimeovideoid,
+						'videoid': videoid,
 						'contactid': contactid,
 						'percent': parseInt(percent)
 					};
 					   
 					jQuery.post(vimeo_ajax_object.ajax_url, data, function(response) {
 						console.log('Got this from the server: ' + response.tagged);
-						console.log('Video ID: ' + vimeovideoid);
+						console.log('Video ID: ' + videoid);
+						console.log('Response:', response);  // Log full response
 						
 						if(response.tagged == true) {
 							var vidtags = document.cookie.replace(/(?:(?:^|.*;\s*)contactTags\s*\=\s*([^;]*).*$)|^.*$/, "$1");
+							console.log('Current video tags:', vidtags);  // Log current tags
+							
 							if(vidtags) {
 								if(vidtags.indexOf(response.tagid) == -1) {
 									document.cookie = "contactTags=" + vidtags + ',' + response.tagid;
+									console.log('Added new tag:', response.tagid);  // Log when we add a tag
 								}
 							} else {
 								document.cookie = "contactTags=" + response.tagid;
+								console.log('Set initial tag:', response.tagid);  // Log first tag
 							}
+							
+							// Log element states before changes
+							console.log('Video wrapper has red-border:', $(iframe).parents('.videoWrapper').hasClass('red-border'));
+							console.log('Video text has vid-red:', $(iframe).parents('.tab-pane').find('.vid-text').hasClass('vid-red'));
 							
 							if($(iframe).parents('.videoWrapper').hasClass('red-border')) {
 								$(iframe).parents('.videoWrapper').removeClass('red-border').addClass('green-border played');
+								console.log('Changed video wrapper classes');  // Log class changes
 							}
 							if($(iframe).parents('.tab-pane').find('.vid-text').hasClass('vid-red')) {
 								$(iframe).parents('.tab-pane').find('.vid-text').removeClass('vid-red').addClass('vid-green').html('(You Have Completed this Video)');
+								console.log('Changed text classes and content');  // Log text changes
 							}
 						}
 					}, 'json');
