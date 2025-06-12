@@ -12,19 +12,15 @@ jQuery(function($){
 					var iframe 	  = $(this);
 				}
 				var player    = new Vimeo.Player(iframe);
-
-				//var status = $('.status');
 				
 				var twentyfivedone  = false;
 				var fiftydone       = false;
 				var seventyfivedone = false;
 				var hundreddone     = false;
 				
-				var vimeovideoid  = getVimeoId(playerurl);		
-				console.log('Initialized video:', vimeovideoid);
+				var vimeovideoid  = getVimeoId(playerurl);
 				
 			    // When the player is ready, add listeners for pause, finish, and playProgress
-				//player.on('play', onPlay);
 				player.on('ended', onFinish);
 				player.on('timeupdate', onPlayProgress);
 				
@@ -34,73 +30,56 @@ jQuery(function($){
 						sendAjaxRequest(100);
 						hundreddone = true;
 					}
-										
 				}
 
 				function onPlayProgress(data) {
 					var playedpercent = parseFloat(data.percent*100);
-					console.log('Progress:', playedpercent + '%');
 					
 					if((playedpercent >= 25) && (playedpercent < 50) && (!twentyfivedone)) {
-						console.log('Sending 25% request');
 						sendAjaxRequest(25);
 						twentyfivedone = true;
 					}
 					if((playedpercent >= 50) && (playedpercent < 75) && (!fiftydone)) {
-						console.log('Sending 50% request');
 						sendAjaxRequest(50);
 						fiftydone = true;
 					}
 					if((playedpercent >= 75) && (playedpercent < 100) && (!seventyfivedone)) {
-						console.log('Sending 75% request');
+						// Focus on 75% - this is the critical functionality
 						sendAjaxRequest(75);
 						seventyfivedone = true;
-					}
-					
-					// Video unlocking logic - only check when 75% is done
-					if(seventyfivedone) {
-						var vidtags = document.cookie.replace(/(?:(?:^|.*;\s*)contactTags\s*\=\s*([^;]*).*$)|^.*$/, "$1");
-						console.log('Checking tags:', vidtags);
-						if(vidtags) {
-							// Video 2 unlocks when we have 4333 (25% of first video)
-							if(vidtags.indexOf("4333")>-1) {
-								console.log('Unlocking video 2');
-								$('.videoWrapper.video2').removeClass('hide-video').addClass('show-video');
-							}
-							// Video 3 unlocks when we have 4338 (25% of second video)
-							if(vidtags.indexOf("4333")>-1 && vidtags.indexOf("4338")>-1) {
-								console.log('Unlocking video 3');
-								$('.videoWrapper.video3').removeClass('hide-video').addClass('show-video');
-							}
-							// Video 4 unlocks when we have 4343 (25% of third video)
-							if(vidtags.indexOf("4333")>-1 && vidtags.indexOf("4338")>-1 && vidtags.indexOf("4343")>-1) {
-								console.log('Unlocking video 4');
-								$('.videoWrapper.video4').removeClass('hide-video').addClass('show-video');
-							}
-							// Video 5 unlocks when we have 4348 (25% of fourth video)
-							if(vidtags.indexOf("4333")>-1 && vidtags.indexOf("4338")>-1 && vidtags.indexOf("4343")>-1 && vidtags.indexOf("4348")>-1) {
-								console.log('Unlocking video 5');
-								$('.videoWrapper.video5').removeClass('hide-video').addClass('show-video');
-							}
-						}
 					}
 				}
 				
 				function sendAjaxRequest(percent) {
-					console.log('Sending request for video:', vimeovideoid, 'at', percent + '%');
 					var data = {
 						'action': 'vimeo_action',
 						'videoid': vimeovideoid,
 						'contactid': contactid,
 						'percent': parseInt(percent)
 					};
+					
+					// Add specific logging for 75% requests
+					if (percent == 75 && vimeo_ajax_object.debug) {
+						console.log('🎯 75% MILESTONE: Sending critical tag request', {
+							videoId: vimeovideoid,
+							contactId: contactid,
+							percent: percent
+						});
+					}
 					   
 					jQuery.post(vimeo_ajax_object.ajax_url, data, function(response) {
-						console.log('Server response:', response);
+						// Handle successful response
 						if(response.tagged == true) {
 							var vidtags = document.cookie.replace(/(?:(?:^|.*;\s*)contactTags\s*\=\s*([^;]*).*$)|^.*$/, "$1");
-							console.log('Current tags:', vidtags);
-							console.log('Adding tag:', response.tagid);
+							
+							// Log success for 75% specifically
+							if (percent == 75 && vimeo_ajax_object.debug) {
+								console.log('✅ 75% SUCCESS: Tag assigned successfully', {
+									tagId: response.tagid,
+									videoId: vimeovideoid,
+									debug: response.debug
+								});
+							}
 							
 							if(vidtags) {
 								if(vidtags.indexOf(response.tagid) == -1) {
@@ -116,8 +95,42 @@ jQuery(function($){
 							if($(iframe).parents('.tab-pane').find('.vid-text').hasClass('vid-red')) {
 								$(iframe).parents('.tab-pane').find('.vid-text').removeClass('vid-red').addClass('vid-green').html('(You Have Completed this Video)');
 							}
+						} else {
+							// Handle failed tagging
+							if (vimeo_ajax_object.debug) {
+								console.error('❌ TAGGING FAILED:', {
+									percent: percent,
+									videoId: vimeovideoid,
+									error: response.error || 'Unknown error',
+									debug: response.debug
+								});
+							}
+							
+							// Special attention to 75% failures
+							if (percent == 75) {
+								console.error('🚨 CRITICAL: 75% tag assignment failed!', response);
+							}
 						}
-					}, 'json');
+					}, 'json').fail(function(xhr, status, error) {
+						// Handle AJAX errors
+						if (vimeo_ajax_object.debug) {
+							console.error('💥 AJAX ERROR:', {
+								percent: percent,
+								videoId: vimeovideoid,
+								status: status,
+								error: error,
+								response: xhr.responseText
+							});
+						}
+						
+						// Special attention to 75% AJAX failures
+						if (percent == 75) {
+							console.error('🚨 CRITICAL AJAX ERROR: 75% request failed!', {
+								status: status,
+								error: error
+							});
+						}
+					});
 				}
 			}
 		});
@@ -168,12 +181,16 @@ jQuery(function($){
 
 	});
 
-	/* on page load, check cookies and modify .videoWrapper and .tab-pane .vid-text if necessary */
-	/* http://www.scheduleyou.in/urymXC6rId */
+	/* on page load, unlock all videos */
+	$('.videoWrapper.video2, .videoWrapper.video3, .videoWrapper.video4, .videoWrapper.video5').removeClass('hide-video').addClass('show-video');
 });
 
 jQuery(document).ready(function($) {
 	var vidtags = document.cookie.replace(/(?:(?:^|.*;\s*)contactTags\s*\=\s*([^;]*).*$)|^.*$/, "$1");
+	
+	/* Ensure all videos are visible regardless of tags */
+	$('.videoWrapper.video2, .videoWrapper.video3, .videoWrapper.video4, .videoWrapper.video5').removeClass('hide-video').addClass('show-video');
+	
 	if(vidtags) {
 		/* check the text and videoWrapper colors and alter as needed */
 		if(vidtags.indexOf("269")>-1 || vidtags.indexOf("281")>-1) {

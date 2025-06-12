@@ -54,53 +54,115 @@ add_action('wp_ajax_nopriv_vimeo_action', 'vimeo_action_callback');
 
 function vimeo_action_callback() {
 	global $i4w;
+	$result = array();
 	$result["tagged"] = false;
+	$result["error"] = "";
+	$result["debug"] = array();
 	
+	// Get plugin settings
 	$options = get_option('iv_settings');
 	
 	if (empty($options)) {
+		$result["error"] = "Plugin settings not configured";
 		echo json_encode($result);
 		wp_die();
 	}
 
-	include(plugin_dir_path(__FILE__) . 'infusionsoft/src/ifisdk.php');    
-	$app = new ifiSDK;
+	// Validate required data
+	$videoid = sanitize_text_field($_POST['videoid'] ?? '');
+	$percent = intval($_POST['percent'] ?? 0);
+	$contactid = intval($_POST['contactid'] ?? 0);
+	
+	$result["debug"]["received_data"] = array(
+		'videoid' => $videoid,
+		'percent' => $percent,
+		'contactid' => $contactid
+	);
 
-	if($app->cfgCon("connection")) {
-		$videoid = $_POST['videoid'];
-		$percent = $_POST['percent'];
-		$contactid = $_POST['contactid'];
+	if(empty($videoid) || empty($percent) || empty($contactid)) {
+		$result["error"] = "Missing required data: videoid, percent, or contactid";
+		echo json_encode($result);
+		wp_die();
+	}
 
-		if($videoid && $percent && $contactid) {
-			// Find which video number matches this video ID
-			$video_number = 0;
-			for($i = 1; $i <= 5; $i++) {
-				if($options['video_' . $i . '_id'] == $videoid) {
-					$video_number = $i;
-					break;
-				}
-			}
+	// Include the Infusionsoft SDK
+	include_once(plugin_dir_path(__FILE__) . 'infusionsoft/src/ifisdk.php');
+	
+	try {
+		$app = new ifiSDK;
+		
+		// Test connection first
+		if(!$app->cfgCon("connection")) {
+			$result["error"] = "Failed to connect to Infusionsoft API";
+			echo json_encode($result);
+			wp_die();
+		}
+		
+		$result["debug"]["api_connected"] = true;
 
-			if($video_number > 0) {
-				if($percent == 100) {
-					$tagid = $options['video_' . $video_number . '_100_tag'];
-				}
-				if($percent == 75) {
-					$tagid = $options['video_' . $video_number . '_75_tag'];
-				}
-				if($percent == 50) {
-					$tagid = $options['video_' . $video_number . '_50_tag'];
-				}
-				if($percent == 25) {
-					$tagid = $options['video_' . $video_number . '_25_tag'];
-				}
-
-				if($tagid) {
-					$result['tagged'] = (bool)$app->grpAssign($contactid, $tagid);
-					$result['tagid'] = $tagid;
-				}
+		// Find which video number matches this video ID
+		$video_number = 0;
+		for($i = 1; $i <= 5; $i++) {
+			if(isset($options['video_' . $i . '_id']) && $options['video_' . $i . '_id'] == $videoid) {
+				$video_number = $i;
+				break;
 			}
 		}
+		
+		$result["debug"]["video_number"] = $video_number;
+
+		if($video_number == 0) {
+			$result["error"] = "Video ID not found in settings: " . $videoid;
+			echo json_encode($result);
+			wp_die();
+		}
+
+		// Get the appropriate tag based on percentage
+		$tagid = 0;
+		if($percent == 75) {
+			// FOCUS: This is the critical 75% functionality
+			$tagid = intval($options['video_' . $video_number . '_75_tag'] ?? 0);
+			$result["debug"]["tag_type"] = "75%";
+		} elseif($percent == 100) {
+			$tagid = intval($options['video_' . $video_number . '_100_tag'] ?? 0);
+			$result["debug"]["tag_type"] = "100%";
+		} elseif($percent == 50) {
+			$tagid = intval($options['video_' . $video_number . '_50_tag'] ?? 0);
+			$result["debug"]["tag_type"] = "50%";
+		} elseif($percent == 25) {
+			$tagid = intval($options['video_' . $video_number . '_25_tag'] ?? 0);
+			$result["debug"]["tag_type"] = "25%";
+		}
+
+		$result["debug"]["tagid"] = $tagid;
+
+		if(empty($tagid)) {
+			$result["error"] = "No tag configured for video {$video_number} at {$percent}%";
+			echo json_encode($result);
+			wp_die();
+		}
+
+		// Assign the tag to the contact
+		$tag_result = $app->grpAssign($contactid, $tagid);
+		
+		$result["debug"]["tag_assignment_result"] = $tag_result;
+		
+		if($tag_result) {
+			$result['tagged'] = true;
+			$result['tagid'] = $tagid;
+			$result["debug"]["success"] = "Tag {$tagid} assigned to contact {$contactid} for video {$video_number} at {$percent}%";
+		} else {
+			$result["error"] = "Failed to assign tag {$tagid} to contact {$contactid}";
+		}
+
+	} catch (Exception $e) {
+		$result["error"] = "Exception: " . $e->getMessage();
+		error_log("Infusionsoft Vimeo Plugin Error: " . $e->getMessage());
+	}
+	
+	// Log the result for debugging
+	if (defined('WP_DEBUG') && WP_DEBUG) {
+		error_log("Vimeo Action Result: " . json_encode($result));
 	}
 	
 	echo json_encode($result);
@@ -273,8 +335,28 @@ function iv_options_page() {
 		<button id="test-infusionsoft-connection" class="button button-secondary">Test Connection</button>
 		<div id="connection-result" style="margin-top: 10px;"></div>
 
+		<hr>
+		
+		<h3>Test 75% Video Tagging</h3>
+		<p>Test the critical 75% video tagging functionality:</p>
+		<table class="form-table">
+			<tr>
+				<th><label for="test-video-id">Video ID:</label></th>
+				<td><input type="text" id="test-video-id" placeholder="Enter Vimeo video ID" style="width: 200px;"></td>
+			</tr>
+			<tr>
+				<th><label for="test-contact-id">Contact ID:</label></th>
+				<td><input type="number" id="test-contact-id" placeholder="Enter contact ID" style="width: 200px;"></td>
+			</tr>
+		</table>
+		<p>
+			<button id="test-75-percent-tagging" class="button button-primary">🎯 Test 75% Tagging</button>
+		</p>
+		<div id="tagging-test-result" style="margin-top: 10px;"></div>
+
 		<script type="text/javascript">
 		jQuery(document).ready(function($) {
+			// Test connection
 			$('#test-infusionsoft-connection').click(function(e) {
 				e.preventDefault();
 				var button = $(this);
@@ -306,8 +388,104 @@ function iv_options_page() {
 					}
 				});
 			});
+			
+			// Test 75% tagging
+			$('#test-75-percent-tagging').click(function(e) {
+				e.preventDefault();
+				var button = $(this);
+				var resultDiv = $('#tagging-test-result');
+				var videoId = $('#test-video-id').val().trim();
+				var contactId = $('#test-contact-id').val().trim();
+				
+				if (!videoId || !contactId) {
+					resultDiv.html('<div class="notice notice-error"><p>Please enter both Video ID and Contact ID</p></div>');
+					return;
+				}
+				
+				button.prop('disabled', true);
+				button.text('Testing 75% Tagging...');
+				resultDiv.html('<div class="notice notice-info"><p>Testing 75% video tagging functionality...</p></div>');
+				
+				$.ajax({
+					url: ajaxurl,
+					type: 'POST',
+					data: {
+						action: 'test_75_percent_tagging',
+						test_video_id: videoId,
+						test_contact_id: contactId
+					},
+					success: function(response) {
+						if (response.success) {
+							var debugInfo = response.data.debug ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
+							resultDiv.html('<div class="notice notice-success"><p><strong>✅ SUCCESS!</strong> ' + response.data.message + '<br>Tag ID: ' + response.data.tag_id + '</p>' + debugInfo + '</div>');
+						} else {
+							var debugInfo = response.data.debug ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
+							resultDiv.html('<div class="notice notice-error"><p><strong>❌ FAILED!</strong> ' + response.data.message + '</p>' + debugInfo + '</div>');
+						}
+					},
+					error: function(xhr, status, error) {
+						resultDiv.html('<div class="notice notice-error"><p>AJAX Error: ' + error + '</p><pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + xhr.responseText + '</pre></div>');
+					},
+					complete: function() {
+						button.prop('disabled', false);
+						button.text('🎯 Test 75% Tagging');
+					}
+				});
+			});
 		});
 		</script>
 	</div>
 	<?php
+}
+
+// Add test 75% functionality handler
+add_action('wp_ajax_test_75_percent_tagging', 'test_75_percent_tagging_callback');
+
+function test_75_percent_tagging_callback() {
+	$options = get_option('iv_settings');
+	
+	if (empty($options)) {
+		wp_send_json_error(['message' => 'Plugin settings not configured']);
+		return;
+	}
+	
+	// Get test parameters
+	$test_video_id = sanitize_text_field($_POST['test_video_id'] ?? '');
+	$test_contact_id = intval($_POST['test_contact_id'] ?? 0);
+	
+	if (empty($test_video_id) || empty($test_contact_id)) {
+		wp_send_json_error(['message' => 'Please provide both video ID and contact ID for testing']);
+		return;
+	}
+	
+	try {
+		// Simulate the 75% request
+		$_POST['videoid'] = $test_video_id;
+		$_POST['percent'] = 75;
+		$_POST['contactid'] = $test_contact_id;
+		
+		// Capture the output from vimeo_action_callback
+		ob_start();
+		vimeo_action_callback();
+		$output = ob_get_clean();
+		
+		$result = json_decode($output, true);
+		
+		if ($result && $result['tagged'] === true) {
+			wp_send_json_success([
+				'message' => 'SUCCESS! 75% tag assignment worked correctly.',
+				'tag_id' => $result['tagid'],
+				'debug' => $result['debug'] ?? []
+			]);
+		} else {
+			wp_send_json_error([
+				'message' => 'FAILED: 75% tag assignment did not work.',
+				'error' => $result['error'] ?? 'Unknown error',
+				'debug' => $result['debug'] ?? []
+			]);
+		}
+		
+	} catch (Exception $e) {
+		wp_send_json_error(['message' => 'Exception: ' . $e->getMessage()]);
+	}
 }
