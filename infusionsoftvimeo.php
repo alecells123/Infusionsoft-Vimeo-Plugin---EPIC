@@ -415,12 +415,17 @@ function iv_options_page() {
 						test_contact_id: contactId
 					},
 					success: function(response) {
-						if (response.success) {
-							var debugInfo = response.data.debug ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
-							resultDiv.html('<div class="notice notice-success"><p><strong>✅ SUCCESS!</strong> ' + response.data.message + '<br>Tag ID: ' + response.data.tag_id + '</p>' + debugInfo + '</div>');
+						console.log('Raw response:', response);
+						
+						if (response && response.success) {
+							var debugInfo = (response.data && response.data.debug) ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
+							var message = (response.data && response.data.message) ? response.data.message : 'Success';
+							var tagId = (response.data && response.data.tag_id) ? response.data.tag_id : 'Unknown';
+							resultDiv.html('<div class="notice notice-success"><p><strong>✅ SUCCESS!</strong> ' + message + '<br>Tag ID: ' + tagId + '</p>' + debugInfo + '</div>');
 						} else {
-							var debugInfo = response.data.debug ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
-							resultDiv.html('<div class="notice notice-error"><p><strong>❌ FAILED!</strong> ' + response.data.message + '</p>' + debugInfo + '</div>');
+							var debugInfo = (response && response.data && response.data.debug) ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
+							var message = (response && response.data && response.data.message) ? response.data.message : 'Unknown error';
+							resultDiv.html('<div class="notice notice-error"><p><strong>❌ FAILED!</strong> ' + message + '</p>' + debugInfo + '</div>');
 						}
 					},
 					error: function(xhr, status, error) {
@@ -459,33 +464,96 @@ function test_75_percent_tagging_callback() {
 	}
 	
 	try {
+		// Store original POST data
+		$original_post = $_POST;
+		
 		// Simulate the 75% request
 		$_POST['videoid'] = $test_video_id;
 		$_POST['percent'] = 75;
 		$_POST['contactid'] = $test_contact_id;
 		
-		// Capture the output from vimeo_action_callback
-		ob_start();
-		vimeo_action_callback();
-		$output = ob_get_clean();
+		// Include the SDK
+		include_once(plugin_dir_path(__FILE__) . 'infusionsoft/src/ifisdk.php');
 		
-		$result = json_decode($output, true);
+		$result = array();
+		$result["tagged"] = false;
+		$result["error"] = "";
+		$result["debug"] = array();
 		
-		if ($result && $result['tagged'] === true) {
+		$app = new ifiSDK;
+		
+		// Test connection first
+		if(!$app->cfgCon("connection")) {
+			wp_send_json_error([
+				'message' => 'Failed to connect to Infusionsoft API',
+				'debug' => ['connection_failed' => true]
+			]);
+			return;
+		}
+		
+		// Find which video number matches this video ID
+		$video_number = 0;
+		for($i = 1; $i <= 5; $i++) {
+			if(isset($options['video_' . $i . '_id']) && $options['video_' . $i . '_id'] == $test_video_id) {
+				$video_number = $i;
+				break;
+			}
+		}
+		
+		if($video_number == 0) {
+			wp_send_json_error([
+				'message' => "Video ID '{$test_video_id}' not found in settings",
+				'debug' => ['video_number' => $video_number, 'settings' => $options]
+			]);
+			return;
+		}
+		
+		// Get the 75% tag
+		$tagid = intval($options['video_' . $video_number . '_75_tag'] ?? 0);
+		
+		if(empty($tagid)) {
+			wp_send_json_error([
+				'message' => "No 75% tag configured for video {$video_number}",
+				'debug' => ['video_number' => $video_number, 'tagid' => $tagid]
+			]);
+			return;
+		}
+		
+		// Assign the tag to the contact
+		$tag_result = $app->grpAssign($test_contact_id, $tagid);
+		
+		// Restore original POST data
+		$_POST = $original_post;
+		
+		if($tag_result) {
 			wp_send_json_success([
 				'message' => 'SUCCESS! 75% tag assignment worked correctly.',
-				'tag_id' => $result['tagid'],
-				'debug' => $result['debug'] ?? []
+				'tag_id' => $tagid,
+				'debug' => [
+					'video_id' => $test_video_id,
+					'video_number' => $video_number,
+					'contact_id' => $test_contact_id,
+					'tag_id' => $tagid,
+					'tag_assignment_result' => $tag_result
+				]
 			]);
 		} else {
 			wp_send_json_error([
-				'message' => 'FAILED: 75% tag assignment did not work.',
-				'error' => $result['error'] ?? 'Unknown error',
-				'debug' => $result['debug'] ?? []
+				'message' => 'FAILED: Tag assignment returned false',
+				'debug' => [
+					'video_id' => $test_video_id,
+					'video_number' => $video_number,
+					'contact_id' => $test_contact_id,
+					'tag_id' => $tagid,
+					'tag_assignment_result' => $tag_result
+				]
 			]);
 		}
 		
 	} catch (Exception $e) {
-		wp_send_json_error(['message' => 'Exception: ' . $e->getMessage()]);
+		wp_send_json_error([
+			'message' => 'Exception: ' . $e->getMessage(),
+			'debug' => ['exception' => $e->getMessage(), 'trace' => $e->getTraceAsString()]
+		]);
 	}
 }
