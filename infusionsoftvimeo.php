@@ -296,22 +296,56 @@ add_action('wp_ajax_test_infusionsoft_connection', 'test_infusionsoft_connection
 
 function test_infusionsoft_connection_callback() {
 	try {
+		$options = get_option('iv_settings', []);
+		
+		// Show what settings we have
+		$debug_info = [
+			'has_api_key' => !empty($options['api_key']),
+			'api_key_length' => isset($options['api_key']) ? strlen($options['api_key']) : 0,
+			'api_key_starts_with' => isset($options['api_key']) ? substr($options['api_key'], 0, 10) . '...' : 'N/A',
+			'has_subdomain' => !empty($options['subdomain']),
+			'subdomain' => $options['subdomain'] ?? 'N/A'
+		];
+		
 		require_once(plugin_dir_path(__FILE__) . 'infusionsoft/src/ifisdk.php');
 		$app = new ifiSDK;
 		
+		// Try a very simple echo test first
+		try {
+			$echo_result = $app->appEcho("test_connection");
+			$debug_info['echo_test'] = $echo_result;
+		} catch (Exception $e) {
+			$debug_info['echo_test_error'] = $e->getMessage();
+		}
+		
+		// Try the connection test
 		if($app->cfgCon("connection")) {
 			// Try to make a simple API call
 			$result = $app->dsGetSetting("Application", "enabled");
-			if(strpos($result, 'ERROR') !== FALSE) {
-				wp_send_json_error(['message' => 'Connection failed: ' . $result]);
+			$debug_info['app_setting_result'] = $result;
+			
+			if(is_string($result) && strpos($result, 'ERROR') !== FALSE) {
+				wp_send_json_error([
+					'message' => 'Connection failed: ' . $result,
+					'debug' => $debug_info
+				]);
 			} else {
-				wp_send_json_success(['message' => 'Successfully connected to Infusionsoft!']);
+				wp_send_json_success([
+					'message' => 'Successfully connected to Infusionsoft!',
+					'debug' => $debug_info
+				]);
 			}
 		} else {
-			wp_send_json_error(['message' => 'Failed to establish connection']);
+			wp_send_json_error([
+				'message' => 'Failed to establish connection',
+				'debug' => $debug_info
+			]);
 		}
 	} catch (Exception $e) {
-		wp_send_json_error(['message' => 'Error: ' . $e->getMessage()]);
+		wp_send_json_error([
+			'message' => 'Error: ' . $e->getMessage(),
+			'debug' => $debug_info ?? ['error' => 'Failed before debug info collected']
+		]);
 	}
 	wp_die();
 }
@@ -373,10 +407,13 @@ function iv_options_page() {
 						action: 'test_infusionsoft_connection'
 					},
 					success: function(response) {
+						console.log('Connection test response:', response);
 						if (response.success) {
-							resultDiv.html('<div class="notice notice-success"><p>' + response.data.message + '</p></div>');
+							var debugInfo = response.data.debug ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
+							resultDiv.html('<div class="notice notice-success"><p>' + response.data.message + '</p>' + debugInfo + '</div>');
 						} else {
-							resultDiv.html('<div class="notice notice-error"><p>' + response.data.message + '</p></div>');
+							var debugInfo = response.data.debug ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
+							resultDiv.html('<div class="notice notice-error"><p>' + response.data.message + '</p>' + debugInfo + '</div>');
 						}
 					},
 					error: function() {

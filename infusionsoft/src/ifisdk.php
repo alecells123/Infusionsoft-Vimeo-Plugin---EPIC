@@ -28,103 +28,200 @@ class ifiSDK {
 
     private function makeApiCall($service, $params = []) {
         try {
-            $curl = curl_init();
-            
-            // Build XML request with proper parameter encoding
-            $xml_request = '<?xml version="1.0"?>
-            <methodCall>
-              <methodName>' . $service . '</methodName>
-              <params>';
-            
-            foreach ($params as $param) {
-                $xml_request .= '
-                <param>
-                  <value>';
-                
-                if (is_int($param)) {
-                    $xml_request .= '<int>' . $param . '</int>';
-                } elseif (is_string($param)) {
-                    $xml_request .= '<string>' . htmlspecialchars($param) . '</string>';
-                } elseif (is_array($param)) {
-                    $xml_request .= '<array><data>';
-                    foreach ($param as $item) {
-                        $xml_request .= '<value><string>' . htmlspecialchars($item) . '</string></value>';
-                    }
-                    $xml_request .= '</data></array>';
-                } else {
-                    $xml_request .= '<string>' . htmlspecialchars($param) . '</string>';
-                }
-                
-                $xml_request .= '</value>
-                </param>';
+            // First, try the modern Bearer token method
+            try {
+                return $this->makeApiCallWithBearer($service, $params);
+            } catch (ifiSDKException $e) {
+                $this->sdk_debug_log('Bearer token method failed, trying legacy method', $e->getMessage());
+                // If Bearer token fails, try the legacy API key in params method
+                return $this->makeApiCallWithLegacy($service, $params);
             }
-            
-            $xml_request .= '
-              </params>
-            </methodCall>';
-
-            $this->sdk_debug_log('XML Request', $xml_request);
-
-            curl_setopt_array($curl, array(
-                CURLOPT_URL => 'https://api.infusionsoft.com/crm/xmlrpc',
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_ENCODING => '',
-                CURLOPT_MAXREDIRS => 10,
-                CURLOPT_TIMEOUT => 30,
-                CURLOPT_FOLLOWLOCATION => true,
-                CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-                CURLOPT_CUSTOMREQUEST => 'POST',
-                CURLOPT_POSTFIELDS => $xml_request,
-                CURLOPT_HTTPHEADER => array(
-                    'Authorization: Bearer ' . $this->key,
-                    'Content-Type: text/xml'
-                )
-            ));
-
-            $response = curl_exec($curl);
-            $http_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
-            
-            $this->sdk_debug_log('HTTP Response Code', $http_code);
-            $this->sdk_debug_log('Raw Response', $response);
-
-            if ($http_code !== 200) {
-                throw new ifiSDKException("API request failed: HTTP $http_code - Response: " . $response);
-            }
-
-            if (curl_error($curl)) {
-                throw new ifiSDKException("CURL Error: " . curl_error($curl));
-            }
-
-            // Parse the XML-RPC response
-            $parsed_response = $this->parseXmlRpcResponse($response);
-            
-            $this->sdk_debug_log('Parsed Response', $parsed_response);
-            
-            return $parsed_response;
-
         } catch (Exception $e) {
             if ($this->debug) {
                 error_log("Infusionsoft API Error: " . $e->getMessage());
             }
             throw new ifiSDKException($e->getMessage());
-        } finally {
-            if (isset($curl) && is_resource($curl)) {
-                curl_close($curl);
+        }
+    }
+    
+    private function makeApiCallWithBearer($service, $params = []) {
+        $curl = curl_init();
+        
+        // Build XML request with proper parameter encoding
+        $xml_request = '<?xml version="1.0"?>
+        <methodCall>
+          <methodName>' . $service . '</methodName>
+          <params>';
+        
+        foreach ($params as $param) {
+            $xml_request .= '
+            <param>
+              <value>' . $this->encodeXmlRpcValue($param) . '</value>
+            </param>';
+        }
+        
+        $xml_request .= '
+          </params>
+        </methodCall>';
+
+        $this->sdk_debug_log('Bearer XML Request', $xml_request);
+
+        curl_setopt_array($curl, array(
+            CURLOPT_URL => 'https://api.infusionsoft.com/crm/xmlrpc',
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_ENCODING => '',
+            CURLOPT_MAXREDIRS => 10,
+            CURLOPT_TIMEOUT => 30,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+            CURLOPT_CUSTOMREQUEST => 'POST',
+            CURLOPT_POSTFIELDS => $xml_request,
+            CURLOPT_HTTPHEADER => array(
+                'Authorization: Bearer ' . $this->key,
+                'Content-Type: text/xml'
+            )
+        ));
+
+        $response = curl_exec($curl);
+        $http_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        
+        $this->sdk_debug_log('Bearer HTTP Response Code', $http_code);
+        $this->sdk_debug_log('Bearer Raw Response', $response);
+
+        if ($http_code !== 200) {
+            throw new ifiSDKException("Bearer API request failed: HTTP $http_code - Response: " . $response);
+        }
+
+        if (curl_error($curl)) {
+            throw new ifiSDKException("Bearer CURL Error: " . curl_error($curl));
+        }
+
+        curl_close($curl);
+        
+        // Parse the XML-RPC response
+        $parsed_response = $this->parseXmlRpcResponse($response);
+        
+        $this->sdk_debug_log('Bearer Parsed Response', $parsed_response);
+        
+        return $parsed_response;
+    }
+    
+    private function makeApiCallWithLegacy($service, $params = []) {
+        // Get subdomain from settings
+        $options = get_option('iv_settings', []);
+        $subdomain = $options['subdomain'] ?? '';
+        
+        if (empty($subdomain)) {
+            throw new ifiSDKException("Subdomain required for legacy API calls");
+        }
+        
+        $curl = curl_init();
+        
+        // For legacy API, include API key as first parameter
+        $all_params = array_merge([$this->key], $params);
+        
+        // Build XML request with API key as first parameter
+        $xml_request = '<?xml version="1.0"?>
+        <methodCall>
+          <methodName>' . $service . '</methodName>
+          <params>';
+        
+        foreach ($all_params as $param) {
+            $xml_request .= '
+            <param>
+              <value>' . $this->encodeXmlRpcValue($param) . '</value>
+            </param>';
+        }
+        
+        $xml_request .= '
+          </params>
+        </methodCall>';
+
+        $this->sdk_debug_log('Legacy XML Request', $xml_request);
+
+        curl_setopt_array($curl, array(
+            CURLOPT_URL => 'https://' . $subdomain . '.infusionsoft.com/api/xmlrpc',
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_ENCODING => '',
+            CURLOPT_MAXREDIRS => 10,
+            CURLOPT_TIMEOUT => 30,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+            CURLOPT_CUSTOMREQUEST => 'POST',
+            CURLOPT_POSTFIELDS => $xml_request,
+            CURLOPT_HTTPHEADER => array(
+                'Content-Type: text/xml'
+            )
+        ));
+
+        $response = curl_exec($curl);
+        $http_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        
+        $this->sdk_debug_log('Legacy HTTP Response Code', $http_code);
+        $this->sdk_debug_log('Legacy Raw Response', $response);
+
+        if ($http_code !== 200) {
+            throw new ifiSDKException("Legacy API request failed: HTTP $http_code - Response: " . $response);
+        }
+
+        if (curl_error($curl)) {
+            throw new ifiSDKException("Legacy CURL Error: " . curl_error($curl));
+        }
+
+        curl_close($curl);
+        
+        // Parse the XML-RPC response
+        $parsed_response = $this->parseXmlRpcResponse($response);
+        
+        $this->sdk_debug_log('Legacy Parsed Response', $parsed_response);
+        
+        return $parsed_response;
+    }
+    
+    private function encodeXmlRpcValue($param) {
+        if (is_int($param)) {
+            return '<int>' . $param . '</int>';
+        } elseif (is_string($param)) {
+            return '<string>' . htmlspecialchars($param) . '</string>';
+        } elseif (is_array($param)) {
+            $xml = '<array><data>';
+            foreach ($param as $item) {
+                $xml .= '<value>' . $this->encodeXmlRpcValue($item) . '</value>';
             }
+            $xml .= '</data></array>';
+            return $xml;
+        } else {
+            return '<string>' . htmlspecialchars($param) . '</string>';
         }
     }
     
     private function parseXmlRpcResponse($xml_response) {
+        $this->sdk_debug_log('Parsing XML Response', substr($xml_response, 0, 1000));
+        
         // Check for fault response first
         if (strpos($xml_response, '<fault>') !== false) {
-            // Parse fault
-            preg_match('/<value><int>(\d+)<\/int><\/value>/', $xml_response, $fault_code_matches);
-            preg_match('/<value><string>(.*?)<\/string><\/value>/', $xml_response, $fault_string_matches);
+            // More comprehensive fault parsing
+            $fault_code = 'Unknown';
+            $fault_string = 'Unknown error';
             
-            $fault_code = isset($fault_code_matches[1]) ? $fault_code_matches[1] : 'Unknown';
-            $fault_string = isset($fault_string_matches[1]) ? $fault_string_matches[1] : 'Unknown error';
+            // Try different fault parsing patterns
+            if (preg_match('/<name>faultCode<\/name>\s*<value><int>(\d+)<\/int><\/value>/', $xml_response, $matches)) {
+                $fault_code = $matches[1];
+            }
             
+            if (preg_match('/<name>faultString<\/name>\s*<value><string>(.*?)<\/string><\/value>/', $xml_response, $matches)) {
+                $fault_string = $matches[1];
+            }
+            
+            $this->sdk_debug_log('API Fault Detected', ['code' => $fault_code, 'message' => $fault_string]);
             throw new ifiSDKException("Infusionsoft API Fault: Code $fault_code - $fault_string");
+        }
+        
+        // Check for authentication errors
+        if (strpos($xml_response, 'Authentication failed') !== false || 
+            strpos($xml_response, 'Invalid API key') !== false ||
+            strpos($xml_response, 'Unauthorized') !== false) {
+            throw new ifiSDKException("Authentication failed - check your API key");
         }
         
         // Parse successful response
@@ -143,12 +240,18 @@ class ifiSDK {
             return isset($matches[1]) ? $matches[1] : '';
         }
         
-        // If we can't parse it, but there's no fault, assume success
-        if (strpos($xml_response, 'methodResponse') !== false && strpos($xml_response, '<fault>') === false) {
+        // Check for empty successful response
+        if (strpos($xml_response, '<params><param><value></value></param></params>') !== false) {
             return true;
         }
         
-        throw new ifiSDKException("Unable to parse XML-RPC response: " . substr($xml_response, 0, 500));
+        // If we can't parse it, but there's no fault, log the full response for debugging
+        if (strpos($xml_response, 'methodResponse') !== false && strpos($xml_response, '<fault>') === false) {
+            $this->sdk_debug_log('Unparseable successful response', $xml_response);
+            return true;
+        }
+        
+        throw new ifiSDKException("Unable to parse XML-RPC response. Raw response: " . substr($xml_response, 0, 1000));
     }
 
     /**
