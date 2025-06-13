@@ -103,6 +103,16 @@ class ifiSDK {
         
         $this->sdk_debug_log('Parsed REST Response', $parsed_response);
         
+        // Special logging for tag operations
+        if (in_array($service, ['ContactService.addToGroup', 'ContactService.removeFromGroup'])) {
+            $this->sdk_debug_log('Tag Operation Result', [
+                'service' => $service,
+                'http_code' => $http_code,
+                'response_empty' => empty($parsed_response),
+                'raw_response' => $response
+            ]);
+        }
+        
         return $this->mapRestResponseToXmlRpcFormat($service, $parsed_response);
     }
     
@@ -199,6 +209,30 @@ class ifiSDK {
                     'data' => null
                 ];
                 
+            case 'DataService.findByField':
+                // Find contacts by field: params = [table, limit, page, field, value, returnFields]
+                $table = $params[0] ?? null;
+                $limit = $params[1] ?? 50;
+                $page = $params[2] ?? 0;
+                $field = $params[3] ?? null;
+                $value = $params[4] ?? null;
+                $return_fields = $params[5] ?? [];
+                
+                if ($table !== 'ContactGroupAssign') {
+                    throw new ifiSDKException("DataService.findByField only supports ContactGroupAssign table in REST mapping");
+                }
+                
+                if ($field !== 'ContactId') {
+                    throw new ifiSDKException("DataService.findByField only supports ContactId field searches in REST mapping");
+                }
+                
+                // For ContactGroupAssign table, we'll get contact tags via REST API
+                return [
+                    'url' => $base_url . '/contacts/' . $value . '/tags',
+                    'method' => 'GET',
+                    'data' => null
+                ];
+                
             default:
                 return null;
         }
@@ -249,7 +283,25 @@ class ifiSDK {
             case 'ContactService.addToGroup':
             case 'ContactService.removeFromGroup':
                 // Return true for successful tag assignment/removal
-                return !empty($rest_response) || $rest_response === [];
+                // Keap API returns empty response for successful tag operations
+                return true;
+                
+            case 'DataService.findByField':
+                // Convert contact tags response to XML-RPC format
+                if (empty($rest_response) || !isset($rest_response['tags'])) {
+                    return [];
+                }
+                
+                $xmlrpc_response = [];
+                foreach ($rest_response['tags'] as $tag) {
+                    $xmlrpc_response[] = [
+                        'ContactId' => $rest_response['contact_id'] ?? 0,
+                        'GroupId' => $tag['id'] ?? 0,
+                        'ContactGroup' => $tag['id'] ?? 0
+                    ];
+                }
+                
+                return $xmlrpc_response;
                 
             default:
                 return $rest_response;
