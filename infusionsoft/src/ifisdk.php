@@ -14,6 +14,7 @@ class ifiSDK {
     private $debug;
     public $logname = '';
     public $loggingEnabled = 0;
+    private $current_contact_id = null;
 
     private function sdk_debug_log($message, $data = null) {
         if ($this->debug && defined('WP_DEBUG') && WP_DEBUG) {
@@ -50,8 +51,9 @@ class ifiSDK {
         
         $curl = curl_init();
         
+        // Keap Personal Access Tokens use X-Keap-API-Key header, not Authorization Bearer
         $headers = [
-            'Authorization: Bearer ' . $this->key,
+            'X-Keap-API-Key: ' . $this->key,
             'Content-Type: application/json',
             'Accept: application/json'
         ];
@@ -116,6 +118,10 @@ class ifiSDK {
         return $this->mapRestResponseToXmlRpcFormat($service, $parsed_response);
     }
     
+    private function getContactIdFromContext() {
+        return $this->current_contact_id ?? 0;
+    }
+    
     private function mapServiceToRestEndpoint($service, $params) {
         $base_url = 'https://api.infusionsoft.com/crm/rest/v1';
         
@@ -123,7 +129,7 @@ class ifiSDK {
             case 'DataService.getAppSetting':
                 // Simple test endpoint - get app info
                 return [
-                    'url' => $base_url . '/account/profile',
+                    'url' => 'https://api.infusionsoft.com/crm/rest/v1/account/profile',
                     'method' => 'GET',
                     'data' => null
                 ];
@@ -226,6 +232,9 @@ class ifiSDK {
                     throw new ifiSDKException("DataService.findByField only supports ContactId field searches in REST mapping");
                 }
                 
+                // Store contact ID for response mapping
+                $this->current_contact_id = (int)$value;
+                
                 // For ContactGroupAssign table, we'll get contact tags via REST API
                 return [
                     'url' => $base_url . '/contacts/' . $value . '/tags',
@@ -288,17 +297,33 @@ class ifiSDK {
                 
             case 'DataService.findByField':
                 // Convert contact tags response to XML-RPC format
-                if (empty($rest_response) || !isset($rest_response['tags'])) {
+                if (empty($rest_response)) {
                     return [];
                 }
                 
                 $xmlrpc_response = [];
-                foreach ($rest_response['tags'] as $tag) {
-                    $xmlrpc_response[] = [
-                        'ContactId' => $rest_response['contact_id'] ?? 0,
-                        'GroupId' => $tag['id'] ?? 0,
-                        'ContactGroup' => $tag['id'] ?? 0
-                    ];
+                
+                // If we got tags directly from /contacts/{id}/tags endpoint
+                if (isset($rest_response['tags'])) {
+                    foreach ($rest_response['tags'] as $tag) {
+                        $xmlrpc_response[] = [
+                            'ContactId' => (int)($rest_response['contact_id'] ?? 0),
+                            'GroupId' => (int)($tag['id'] ?? 0),
+                            'ContactGroup' => (int)($tag['id'] ?? 0)
+                        ];
+                    }
+                } else {
+                    // If we got an array of tags directly
+                    $contact_id = $this->getContactIdFromContext();
+                    foreach ($rest_response as $tag) {
+                        if (isset($tag['id'])) {
+                            $xmlrpc_response[] = [
+                                'ContactId' => (int)$contact_id,
+                                'GroupId' => (int)$tag['id'],
+                                'ContactGroup' => (int)$tag['id']
+                            ];
+                        }
+                    }
                 }
                 
                 return $xmlrpc_response;
