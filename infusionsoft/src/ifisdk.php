@@ -135,9 +135,32 @@ class ifiSDK {
                     throw new ifiSDKException("Contact ID required for load operation");
                 }
                 
+                // Map XML-RPC field names to REST API field names
+                $field_mapping = [
+                    'Id' => 'id',
+                    'FirstName' => 'given_name',
+                    'LastName' => 'family_name', 
+                    'Email' => 'email_addresses',
+                    'Phone1' => 'phone_numbers',
+                    'StreetAddress1' => 'addresses',
+                    'City' => 'addresses',
+                    'State' => 'addresses',
+                    'PostalCode' => 'addresses',
+                    'Country' => 'addresses'
+                ];
+                
                 $query_params = '';
                 if (!empty($fields)) {
-                    $query_params = '?optional_properties=' . implode(',', $fields);
+                    $rest_fields = [];
+                    foreach ($fields as $field) {
+                        if (isset($field_mapping[$field])) {
+                            $rest_fields[] = $field_mapping[$field];
+                        }
+                    }
+                    if (!empty($rest_fields)) {
+                        $rest_fields = array_unique($rest_fields); // Remove duplicates
+                        $query_params = '?optional_properties=' . implode(',', $rest_fields);
+                    }
                 }
                 
                 return [
@@ -189,8 +212,39 @@ class ifiSDK {
                 return !empty($rest_response) ? true : false;
                 
             case 'ContactService.load':
-                // Return the contact data directly
-                return $rest_response;
+                // Convert REST API response back to XML-RPC format
+                if (empty($rest_response)) {
+                    return [];
+                }
+                
+                $xmlrpc_response = [];
+                
+                // Map REST API fields back to XML-RPC field names
+                if (isset($rest_response['id'])) {
+                    $xmlrpc_response['Id'] = $rest_response['id'];
+                }
+                if (isset($rest_response['given_name'])) {
+                    $xmlrpc_response['FirstName'] = $rest_response['given_name'];
+                }
+                if (isset($rest_response['family_name'])) {
+                    $xmlrpc_response['LastName'] = $rest_response['family_name'];
+                }
+                if (isset($rest_response['email_addresses']) && !empty($rest_response['email_addresses'])) {
+                    $xmlrpc_response['Email'] = $rest_response['email_addresses'][0]['email'] ?? '';
+                }
+                if (isset($rest_response['phone_numbers']) && !empty($rest_response['phone_numbers'])) {
+                    $xmlrpc_response['Phone1'] = $rest_response['phone_numbers'][0]['number'] ?? '';
+                }
+                if (isset($rest_response['addresses']) && !empty($rest_response['addresses'])) {
+                    $address = $rest_response['addresses'][0];
+                    $xmlrpc_response['StreetAddress1'] = $address['line1'] ?? '';
+                    $xmlrpc_response['City'] = $address['locality'] ?? '';
+                    $xmlrpc_response['State'] = $address['region'] ?? '';
+                    $xmlrpc_response['PostalCode'] = $address['zip_code'] ?? '';
+                    $xmlrpc_response['Country'] = $address['country_code'] ?? '';
+                }
+                
+                return $xmlrpc_response;
                 
             case 'ContactService.addToGroup':
             case 'ContactService.removeFromGroup':
