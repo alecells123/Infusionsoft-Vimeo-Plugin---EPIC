@@ -519,33 +519,69 @@ function test_75_percent_tagging_callback() {
 			return;
 		}
 		
-		// Assign the tag to the contact
+		// First, let's test if the contact exists
+		$contact_test = $app->loadCon($test_contact_id, ['Id', 'FirstName', 'LastName', 'Email']);
+		
+		if (!$contact_test || empty($contact_test)) {
+			wp_send_json_error([
+				'message' => "FAILED: Contact ID {$test_contact_id} does not exist in Infusionsoft",
+				'debug' => [
+					'contact_test_result' => $contact_test,
+					'video_id' => $test_video_id,
+					'video_number' => $video_number,
+					'contact_id' => $test_contact_id,
+					'tag_id' => $tagid
+				]
+			]);
+			return;
+		}
+		
+		// Now assign the tag to the contact
 		$tag_result = $app->grpAssign($test_contact_id, $tagid);
+		
+		// Let's also verify the tag was actually assigned by checking the contact's tags
+		// Note: We'll need to wait a moment for the assignment to process
+		sleep(1);
+		
+		// Try to load contact groups/tags to verify
+		$verification_result = null;
+		try {
+			// This might not work depending on API permissions, but let's try
+			$verification_result = $app->dsFind('ContactGroupAssign', 10, 0, 'ContactId', $test_contact_id, ['GroupId']);
+		} catch (Exception $e) {
+			// If we can't verify, that's okay
+			$verification_result = "Cannot verify - insufficient API permissions: " . $e->getMessage();
+		}
 		
 		// Restore original POST data
 		$_POST = $original_post;
 		
-		if($tag_result) {
+		if($tag_result === true || $tag_result === 1 || is_numeric($tag_result)) {
 			wp_send_json_success([
-				'message' => 'SUCCESS! 75% tag assignment worked correctly.',
+				'message' => 'SUCCESS! Tag assignment API call completed. Check Infusionsoft to verify the tag was actually applied.',
 				'tag_id' => $tagid,
 				'debug' => [
 					'video_id' => $test_video_id,
 					'video_number' => $video_number,
 					'contact_id' => $test_contact_id,
 					'tag_id' => $tagid,
-					'tag_assignment_result' => $tag_result
+					'contact_exists' => $contact_test,
+					'tag_assignment_result' => $tag_result,
+					'verification_result' => $verification_result,
+					'result_type' => gettype($tag_result)
 				]
 			]);
 		} else {
 			wp_send_json_error([
-				'message' => 'FAILED: Tag assignment returned false',
+				'message' => 'FAILED: Tag assignment returned unexpected result',
 				'debug' => [
 					'video_id' => $test_video_id,
 					'video_number' => $video_number,
 					'contact_id' => $test_contact_id,
 					'tag_id' => $tagid,
-					'tag_assignment_result' => $tag_result
+					'contact_exists' => $contact_test,
+					'tag_assignment_result' => $tag_result,
+					'result_type' => gettype($tag_result)
 				]
 			]);
 		}

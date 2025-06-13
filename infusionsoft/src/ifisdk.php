@@ -30,7 +30,7 @@ class ifiSDK {
         try {
             $curl = curl_init();
             
-            // Build XML request
+            // Build XML request with proper parameter encoding
             $xml_request = '<?xml version="1.0"?>
             <methodCall>
               <methodName>' . $service . '</methodName>
@@ -39,13 +39,31 @@ class ifiSDK {
             foreach ($params as $param) {
                 $xml_request .= '
                 <param>
-                  <value>' . htmlspecialchars($param) . '</value>
+                  <value>';
+                
+                if (is_int($param)) {
+                    $xml_request .= '<int>' . $param . '</int>';
+                } elseif (is_string($param)) {
+                    $xml_request .= '<string>' . htmlspecialchars($param) . '</string>';
+                } elseif (is_array($param)) {
+                    $xml_request .= '<array><data>';
+                    foreach ($param as $item) {
+                        $xml_request .= '<value><string>' . htmlspecialchars($item) . '</string></value>';
+                    }
+                    $xml_request .= '</data></array>';
+                } else {
+                    $xml_request .= '<string>' . htmlspecialchars($param) . '</string>';
+                }
+                
+                $xml_request .= '</value>
                 </param>';
             }
             
             $xml_request .= '
               </params>
             </methodCall>';
+
+            $this->sdk_debug_log('XML Request', $xml_request);
 
             curl_setopt_array($curl, array(
                 CURLOPT_URL => 'https://api.infusionsoft.com/crm/xmlrpc',
@@ -65,12 +83,24 @@ class ifiSDK {
 
             $response = curl_exec($curl);
             $http_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+            
+            $this->sdk_debug_log('HTTP Response Code', $http_code);
+            $this->sdk_debug_log('Raw Response', $response);
 
             if ($http_code !== 200) {
-                throw new ifiSDKException("API request failed: HTTP $http_code");
+                throw new ifiSDKException("API request failed: HTTP $http_code - Response: " . $response);
             }
 
-            return true;
+            if (curl_error($curl)) {
+                throw new ifiSDKException("CURL Error: " . curl_error($curl));
+            }
+
+            // Parse the XML-RPC response
+            $parsed_response = $this->parseXmlRpcResponse($response);
+            
+            $this->sdk_debug_log('Parsed Response', $parsed_response);
+            
+            return $parsed_response;
 
         } catch (Exception $e) {
             if ($this->debug) {
@@ -82,6 +112,43 @@ class ifiSDK {
                 curl_close($curl);
             }
         }
+    }
+    
+    private function parseXmlRpcResponse($xml_response) {
+        // Check for fault response first
+        if (strpos($xml_response, '<fault>') !== false) {
+            // Parse fault
+            preg_match('/<value><int>(\d+)<\/int><\/value>/', $xml_response, $fault_code_matches);
+            preg_match('/<value><string>(.*?)<\/string><\/value>/', $xml_response, $fault_string_matches);
+            
+            $fault_code = isset($fault_code_matches[1]) ? $fault_code_matches[1] : 'Unknown';
+            $fault_string = isset($fault_string_matches[1]) ? $fault_string_matches[1] : 'Unknown error';
+            
+            throw new ifiSDKException("Infusionsoft API Fault: Code $fault_code - $fault_string");
+        }
+        
+        // Parse successful response
+        if (strpos($xml_response, '<int>') !== false) {
+            preg_match('/<int>(\d+)<\/int>/', $xml_response, $matches);
+            return isset($matches[1]) ? (int)$matches[1] : false;
+        }
+        
+        if (strpos($xml_response, '<boolean>') !== false) {
+            preg_match('/<boolean>([01])<\/boolean>/', $xml_response, $matches);
+            return isset($matches[1]) ? (bool)$matches[1] : false;
+        }
+        
+        if (strpos($xml_response, '<string>') !== false) {
+            preg_match('/<string>(.*?)<\/string>/', $xml_response, $matches);
+            return isset($matches[1]) ? $matches[1] : '';
+        }
+        
+        // If we can't parse it, but there's no fault, assume success
+        if (strpos($xml_response, 'methodResponse') !== false && strpos($xml_response, '<fault>') === false) {
+            return true;
+        }
+        
+        throw new ifiSDKException("Unable to parse XML-RPC response: " . substr($xml_response, 0, 500));
     }
 
     /**
@@ -97,14 +164,15 @@ class ifiSDK {
         // Get settings from WordPress options
         $options = get_option('iv_settings', []);
         $this->key = !empty($key) ? $key : ($options['api_key'] ?? '');
-        $this->debug = $dbOn;
+        $this->debug = ($dbOn === "on" || (defined('WP_DEBUG') && WP_DEBUG));
         
         if (empty($this->key)) {
             throw new ifiSDKException("No API token provided");
         }
         
         $this->sdk_debug_log('Starting connection', [
-            'key_length' => strlen($this->key)
+            'key_length' => strlen($this->key),
+            'debug_enabled' => $this->debug
         ]);
 
         try {
