@@ -75,18 +75,20 @@ jQuery(function($){
 							// Log success for 75% specifically
 							if (percent == 75 && vimeo_ajax_object.debug) {
 								console.log('✅ 75% SUCCESS: Tag assigned successfully', {
-									tagId: response.tagid,
+									tagName: response.tag_name,
 									videoId: vimeovideoid,
 									debug: response.debug
 								});
 							}
 							
+							// Use tag name for cookie tracking instead of numeric ID
+							var tagIdentifier = response.tag_name || response.tagid || 'unknown';
 							if(vidtags) {
-								if(vidtags.indexOf(response.tagid) == -1) {
-									document.cookie = "contactTags=" + vidtags + ',' + response.tagid;
+								if(vidtags.indexOf(tagIdentifier) == -1) {
+									document.cookie = "contactTags=" + vidtags + ',' + tagIdentifier;
 								}
 							} else {
-								document.cookie = "contactTags=" + response.tagid;
+								document.cookie = "contactTags=" + tagIdentifier;
 							}
 							
 							if($(iframe).parents('.videoWrapper').hasClass('red-border')) {

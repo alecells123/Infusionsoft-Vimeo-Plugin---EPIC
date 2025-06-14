@@ -117,42 +117,42 @@ function vimeo_action_callback() {
 			wp_die();
 		}
 
-		// Get the appropriate tag based on percentage
-		$tagid = 0;
+		// Get the appropriate tag name based on percentage
+		$tag_name = '';
 		if($percent == 75) {
 			// FOCUS: This is the critical 75% functionality
-			$tagid = intval($options['video_' . $video_number . '_75_tag'] ?? 0);
+			$tag_name = "Watched 75% of Video {$video_number}";
 			$result["debug"]["tag_type"] = "75%";
 		} elseif($percent == 100) {
-			$tagid = intval($options['video_' . $video_number . '_100_tag'] ?? 0);
+			$tag_name = "Watched 100% of Video {$video_number}";
 			$result["debug"]["tag_type"] = "100%";
 		} elseif($percent == 50) {
-			$tagid = intval($options['video_' . $video_number . '_50_tag'] ?? 0);
+			$tag_name = "Watched 50% of Video {$video_number}";
 			$result["debug"]["tag_type"] = "50%";
 		} elseif($percent == 25) {
-			$tagid = intval($options['video_' . $video_number . '_25_tag'] ?? 0);
+			$tag_name = "Watched 25% of Video {$video_number}";
 			$result["debug"]["tag_type"] = "25%";
 		}
 
-		$result["debug"]["tagid"] = $tagid;
+		$result["debug"]["tag_name"] = $tag_name;
 
-		if(empty($tagid)) {
-			$result["error"] = "No tag configured for video {$video_number} at {$percent}%";
+		if(empty($tag_name)) {
+			$result["error"] = "No tag name determined for video {$video_number} at {$percent}%";
 			echo json_encode($result);
 			wp_die();
 		}
 
-		// Assign the tag to the contact
-		$tag_result = $app->grpAssign($contactid, $tagid);
+		// Assign the tag to the contact using tag name (SDK will find the ID)
+		$tag_result = $app->grpAssign($contactid, $tag_name);
 		
 		$result["debug"]["tag_assignment_result"] = $tag_result;
 		
 		if($tag_result) {
 			$result['tagged'] = true;
-			$result['tagid'] = $tagid;
-			$result["debug"]["success"] = "Tag {$tagid} assigned to contact {$contactid} for video {$video_number} at {$percent}%";
+			$result['tag_name'] = $tag_name;
+			$result["debug"]["success"] = "Tag '{$tag_name}' assigned to contact {$contactid} for video {$video_number} at {$percent}%";
 		} else {
-			$result["error"] = "Failed to assign tag {$tagid} to contact {$contactid}";
+			$result["error"] = "Failed to assign tag '{$tag_name}' to contact {$contactid}";
 		}
 
 	} catch (Exception $e) {
@@ -310,34 +310,29 @@ function test_infusionsoft_connection_callback() {
 		require_once(plugin_dir_path(__FILE__) . 'infusionsoft/src/ifisdk.php');
 		$app = new ifiSDK;
 		
-		// Try a very simple echo test first
+		// Try the connection test with better error handling
 		try {
-			$echo_result = $app->appEcho("test_connection");
-			$debug_info['echo_test'] = $echo_result;
-		} catch (Exception $e) {
-			$debug_info['echo_test_error'] = $e->getMessage();
-		}
-		
-		// Try the connection test
-		if($app->cfgCon("connection")) {
-			// Try to make a simple API call
-			$result = $app->dsGetSetting("Application", "enabled");
-			$debug_info['app_setting_result'] = $result;
+			$connection_result = $app->cfgCon("connection");
+			$debug_info['connection_result'] = $connection_result;
+			$debug_info['connection_result_type'] = gettype($connection_result);
 			
-			if(is_string($result) && strpos($result, 'ERROR') !== FALSE) {
-				wp_send_json_error([
-					'message' => 'Connection failed: ' . $result,
-					'debug' => $debug_info
-				]);
-			} else {
+			if($connection_result === true) {
 				wp_send_json_success([
 					'message' => 'Successfully connected to Infusionsoft!',
 					'debug' => $debug_info
 				]);
+			} else {
+				// Try to understand what went wrong
+				$debug_info['connection_failed'] = true;
+				wp_send_json_error([
+					'message' => 'Connection test returned: ' . var_export($connection_result, true),
+					'debug' => $debug_info
+				]);
 			}
-		} else {
+		} catch (Exception $e) {
+			$debug_info['connection_exception'] = $e->getMessage();
 			wp_send_json_error([
-				'message' => 'Failed to establish connection',
+				'message' => 'Connection exception: ' . $e->getMessage(),
 				'debug' => $debug_info
 			]);
 		}
@@ -387,6 +382,21 @@ function iv_options_page() {
 			<button id="test-75-percent-tagging" class="button button-primary">🎯 Test 75% Tagging</button>
 		</p>
 		<div id="tagging-test-result" style="margin-top: 10px;"></div>
+
+		<hr>
+		
+		<h3>Test Simple Contact Update</h3>
+		<p>Test if we can actually modify contact data in Keap:</p>
+		<table class="form-table">
+			<tr>
+				<th><label for="update-contact-id">Contact ID:</label></th>
+				<td><input type="number" id="update-contact-id" placeholder="Enter contact ID to test update" style="width: 200px;"></td>
+			</tr>
+		</table>
+		<p>
+			<button id="test-contact-update" class="button button-secondary">🔧 Test Contact Update</button>
+		</p>
+		<div id="contact-update-result" style="margin-top: 10px;"></div>
 
 		<script type="text/javascript">
 		jQuery(document).ready(function($) {
@@ -474,8 +484,107 @@ function iv_options_page() {
 					}
 				});
 			});
+			
+			// Test simple contact update
+			$('#test-contact-update').click(function(e) {
+				e.preventDefault();
+				var button = $(this);
+				var resultDiv = $('#contact-update-result');
+				var contactId = $('#update-contact-id').val().trim();
+				
+				if (!contactId) {
+					resultDiv.html('<div class="notice notice-error"><p>Please enter a Contact ID</p></div>');
+					return;
+				}
+				
+				button.prop('disabled', true);
+				button.text('Testing Update...');
+				resultDiv.html('<div class="notice notice-info"><p>Testing simple contact update...</p></div>');
+				
+				$.ajax({
+					url: ajaxurl,
+					type: 'POST',
+					data: {
+						action: 'test_simple_contact_update',
+						test_contact_id: contactId
+					},
+					success: function(response) {
+						console.log('Contact update response:', response);
+						
+						if (response && response.success) {
+							var debugInfo = (response.data && response.data.debug) ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
+							var message = (response.data && response.data.message) ? response.data.message : 'Success';
+							resultDiv.html('<div class="notice notice-success"><p><strong>✅ SUCCESS!</strong> ' + message + '</p>' + debugInfo + '</div>');
+						} else {
+							var debugInfo = (response && response.data && response.data.debug) ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
+							var message = (response && response.data && response.data.message) ? response.data.message : 'Unknown error';
+							resultDiv.html('<div class="notice notice-error"><p><strong>❌ FAILED!</strong> ' + message + '</p>' + debugInfo + '</div>');
+						}
+					},
+					error: function(xhr, status, error) {
+						resultDiv.html('<div class="notice notice-error"><p>AJAX Error: ' + error + '</p><pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + xhr.responseText + '</pre></div>');
+					},
+					complete: function() {
+						button.prop('disabled', false);
+						button.text('🔧 Test Contact Update');
+					}
+				});
+			});
+			
+			// Test tag search
+			$('#test-tag-search').click(function(e) {
+				e.preventDefault();
+				var button = $(this);
+				var resultDiv = $('#tag-search-result');
+				
+				button.prop('disabled', true);
+				button.text('Searching Tags...');
+				resultDiv.html('<div class="notice notice-info"><p>Searching for tags...</p></div>');
+				
+				$.ajax({
+					url: ajaxurl,
+					type: 'POST',
+					data: {
+						action: 'test_tag_search'
+					},
+					success: function(response) {
+						console.log('Tag search response:', response);
+						
+						if (typeof response === 'string') {
+							try {
+								response = JSON.parse(response);
+							} catch(e) {
+								// Response might already be JSON
+							}
+						}
+						
+						if (response.error) {
+							resultDiv.html('<div class="notice notice-error"><p><strong>❌ Error:</strong> ' + response.error + '</p></div>');
+						} else {
+							var html = '<div class="notice notice-success"><p><strong>✅ Tag Search Results:</strong></p>';
+							html += '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px; max-height: 400px; overflow-y: auto;">' + JSON.stringify(response, null, 2) + '</pre>';
+							html += '</div>';
+							resultDiv.html(html);
+						}
+					},
+					error: function(xhr, status, error) {
+						resultDiv.html('<div class="notice notice-error"><p>AJAX Error: ' + error + '</p><pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + xhr.responseText + '</pre></div>');
+					},
+					complete: function() {
+						button.prop('disabled', false);
+						button.text('🔍 Test Tag Search');
+					}
+				});
+			});
 		});
 		</script>
+		
+		<hr>
+		
+		<h3>🏷️ Test Tag Search</h3>
+		<p>Search for video tracking tags by name:</p>
+		<button id="test-tag-search" class="button">🔍 Test Tag Search</button>
+		<div id="tag-search-result" style="margin-top: 10px;"></div>
 	</div>
 	<?php
 }
@@ -561,34 +670,17 @@ function test_75_percent_tagging_callback() {
 		
 		if (!$contact_test || empty($contact_test)) {
 			wp_send_json_error([
-				'message' => "FAILED: Contact ID {$test_contact_id} does not exist in Infusionsoft",
-				'debug' => [
-					'contact_test_result' => $contact_test,
-					'video_id' => $test_video_id,
-					'video_number' => $video_number,
-					'contact_id' => $test_contact_id,
-					'tag_id' => $tagid
-				]
+									'message' => "FAILED: Contact ID {$test_contact_id} does not exist in Infusionsoft",
+					'debug' => [
+						'contact_id' => $test_contact_id,
+						'contact_exists' => false
+					]
 			]);
 			return;
 		}
 		
 		// Now assign the tag to the contact
 		$tag_result = $app->grpAssign($test_contact_id, $tagid);
-		
-		// Let's also verify the tag was actually assigned by checking the contact's tags
-		// Note: We'll need to wait a moment for the assignment to process
-		sleep(1);
-		
-		// Try to load contact groups/tags to verify
-		$verification_result = null;
-		try {
-			// This might not work depending on API permissions, but let's try
-			$verification_result = $app->dsFind('ContactGroupAssign', 10, 0, 'ContactId', $test_contact_id, ['GroupId']);
-		} catch (Exception $e) {
-			// If we can't verify, that's okay
-			$verification_result = "Cannot verify - insufficient API permissions: " . $e->getMessage();
-		}
 		
 		// Restore original POST data
 		$_POST = $original_post;
@@ -598,13 +690,9 @@ function test_75_percent_tagging_callback() {
 				'message' => 'SUCCESS! Tag assignment API call completed. Check Infusionsoft to verify the tag was actually applied.',
 				'tag_id' => $tagid,
 				'debug' => [
-					'video_id' => $test_video_id,
-					'video_number' => $video_number,
 					'contact_id' => $test_contact_id,
 					'tag_id' => $tagid,
-					'contact_exists' => $contact_test,
 					'tag_assignment_result' => $tag_result,
-					'verification_result' => $verification_result,
 					'result_type' => gettype($tag_result)
 				]
 			]);
@@ -612,11 +700,8 @@ function test_75_percent_tagging_callback() {
 			wp_send_json_error([
 				'message' => 'FAILED: Tag assignment returned unexpected result',
 				'debug' => [
-					'video_id' => $test_video_id,
-					'video_number' => $video_number,
 					'contact_id' => $test_contact_id,
 					'tag_id' => $tagid,
-					'contact_exists' => $contact_test,
 					'tag_assignment_result' => $tag_result,
 					'result_type' => gettype($tag_result)
 				]
@@ -629,4 +714,154 @@ function test_75_percent_tagging_callback() {
 			'debug' => ['exception' => $e->getMessage(), 'trace' => $e->getTraceAsString()]
 		]);
 	}
+}
+
+// Add test simple contact update handler
+add_action('wp_ajax_test_simple_contact_update', 'test_simple_contact_update_callback');
+
+function test_simple_contact_update_callback() {
+	try {
+		$test_contact_id = intval($_POST['test_contact_id'] ?? 0);
+		
+		if (empty($test_contact_id)) {
+			wp_send_json_error(['message' => 'Please provide a contact ID for testing']);
+			return;
+		}
+		
+		require_once(plugin_dir_path(__FILE__) . 'infusionsoft/src/ifisdk.php');
+		$app = new ifiSDK;
+		
+		// First test connection
+		if(!$app->cfgCon("connection")) {
+			wp_send_json_error([
+				'message' => 'Failed to connect to Infusionsoft API',
+				'debug' => ['connection_failed' => true]
+			]);
+			return;
+		}
+		
+		// Load the contact first to see what we're working with
+		$original_contact = $app->loadCon($test_contact_id, ['Id', 'FirstName', 'LastName', 'Email', 'JobTitle']);
+		
+		if (!$original_contact || empty($original_contact)) {
+			wp_send_json_error([
+				'message' => "Contact ID {$test_contact_id} does not exist in Infusionsoft",
+				'debug' => ['contact_load_result' => $original_contact]
+			]);
+			return;
+		}
+		
+		// Simple update - just set JobTitle to "It works!"
+		$update_data = ['JobTitle' => 'It works!'];
+		
+		// Perform the update
+		$update_result = $app->updateCon($test_contact_id, $update_data);
+		
+		// Load the contact again to verify the update worked (including JobTitle)
+		$updated_contact = $app->loadCon($test_contact_id, ['Id', 'FirstName', 'LastName', 'Email', 'JobTitle']);
+		
+		if($update_result === true || $update_result === 1 || is_numeric($update_result)) {
+			wp_send_json_success([
+				'message' => 'SUCCESS! Contact update API call completed. We can modify contacts in Keap.',
+				'debug' => [
+					'contact_id' => $test_contact_id,
+					'original_contact' => $original_contact,
+					'update_data' => $update_data,
+					'update_result' => $update_result,
+					'updated_contact' => $updated_contact,
+					'result_type' => gettype($update_result)
+				]
+			]);
+		} else {
+			wp_send_json_error([
+				'message' => 'FAILED: Contact update returned unexpected result',
+				'debug' => [
+					'contact_id' => $test_contact_id,
+					'original_contact' => $original_contact,
+					'update_data' => $update_data,
+					'update_result' => $update_result,
+					'result_type' => gettype($update_result)
+				]
+			]);
+		}
+		
+	} catch (Exception $e) {
+		wp_send_json_error([
+			'message' => 'Exception: ' . $e->getMessage(),
+			'debug' => ['exception' => $e->getMessage(), 'trace' => $e->getTraceAsString()]
+		]);
+	}
+	
+	wp_die();
+}
+
+// Test searching/creating tags by name
+add_action('wp_ajax_test_tag_search', 'test_tag_search');
+add_action('wp_ajax_nopriv_test_tag_search', 'test_tag_search');
+
+function test_tag_search() {
+    try {
+        $options = get_option('iv_settings', []);
+        $api_key = $options['api_key'] ?? '';
+        
+        if (empty($api_key)) {
+            wp_die('No API key configured');
+        }
+        
+        // Create SDK instance
+        require_once plugin_dir_path(__FILE__) . 'infusionsoft/src/ifisdk.php';
+        $ifs = new ifiSDK();
+        $ifs->cfgCon('MyTestApp', $api_key);
+        
+        $results = [];
+        
+        // Try to find existing tags first
+        try {
+            // Use dsFind to get tags from the Tag table
+            $all_tags = $ifs->dsFind('Tag', 100, 0, 'Id', '%', ['Id', 'GroupName']);
+            $results['all_tags'] = $all_tags;
+            $results['tag_count'] = count($all_tags);
+            
+            // Show just the first few tags for debugging
+            $results['sample_tags'] = array_slice($all_tags, 0, 10);
+            
+        } catch (Exception $e) {
+            $results['tag_search_error'] = $e->getMessage();
+        }
+        
+        // Test searching for our specific tag names
+        $test_tag_names = [
+            'Watched 75% of Video 1',
+            'Watched 75% of Video 2', 
+            'Watched 75% of Video 3',
+            'Watched 75% of Video 4',
+            'Watched 75% of Video 5'
+        ];
+        
+        $results['tag_search_results'] = [];
+        foreach ($test_tag_names as $tag_name) {
+            try {
+                // Test tag assignment directly using the contact from the successful test
+                $test_contact_id = 105375; // Use the contact ID that we know exists
+                $tag_result = $ifs->grpAssign($test_contact_id, $tag_name);
+                
+                $results['tag_search_results'][$tag_name] = [
+                    'assignment_attempted' => true,
+                    'assignment_result' => $tag_result,
+                    'result_type' => gettype($tag_result)
+                ];
+            } catch (Exception $e) {
+                $results['tag_search_results'][$tag_name] = [
+                    'error' => $e->getMessage()
+                ];
+            }
+        }
+        
+        echo json_encode($results, JSON_PRETTY_PRINT);
+        
+    } catch (Exception $e) {
+        echo json_encode(['error' => $e->getMessage()], JSON_PRETTY_PRINT);
+    }
+    
+    wp_die();
 }

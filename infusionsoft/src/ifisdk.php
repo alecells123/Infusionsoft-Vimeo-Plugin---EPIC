@@ -47,21 +47,21 @@ class ifiSDK {
         
         if (!$endpoint_info) {
             throw new ifiSDKException("Service '$service' not supported in REST API mapping");
-        }
-        
+            }
+            
         $curl = curl_init();
         
-        // Keap Personal Access Tokens use X-Keap-API-Key header, not Authorization Bearer
+        // Keap Personal Access Tokens and Service Account Keys use Authorization Bearer header
         $headers = [
-            'X-Keap-API-Key: ' . $this->key,
+            'Authorization: Bearer ' . $this->key,
             'Content-Type: application/json',
             'Accept: application/json'
         ];
-        
+
         curl_setopt_array($curl, [
             CURLOPT_URL => $endpoint_info['url'],
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 30,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => 30,
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_CUSTOMREQUEST => $endpoint_info['method']
         ]);
@@ -75,10 +75,10 @@ class ifiSDK {
             'method' => $endpoint_info['method'],
             'data' => $endpoint_info['data'] ?? null
         ]);
-        
-        $response = curl_exec($curl);
-        $http_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
-        
+
+            $response = curl_exec($curl);
+            $http_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+
         $this->sdk_debug_log('REST Response', [
             'http_code' => $http_code,
             'response' => $response
@@ -127,17 +127,17 @@ class ifiSDK {
         
         switch ($service) {
             case 'DataService.getAppSetting':
-                // Simple test endpoint - get app info
+                // Use the simplest possible endpoint - tags list
                 return [
-                    'url' => 'https://api.infusionsoft.com/crm/rest/v1/account/profile',
+                    'url' => 'https://api.infusionsoft.com/crm/rest/v1/tags?limit=1',
                     'method' => 'GET',
                     'data' => null
                 ];
                 
             case 'DataService.echo':
-                // For echo test, we'll use account profile as a simple test
+                // For echo test, we'll use a basic contact query
                 return [
-                    'url' => $base_url . '/account/profile',
+                    'url' => $base_url . '/contacts?limit=1',
                     'method' => 'GET',
                     'data' => null
                 ];
@@ -162,7 +162,8 @@ class ifiSDK {
                     'City' => 'addresses',
                     'State' => 'addresses',
                     'PostalCode' => 'addresses',
-                    'Country' => 'addresses'
+                    'Country' => 'addresses',
+                    'JobTitle' => 'job_title'
                 ];
                 
                 $query_params = '';
@@ -185,13 +186,64 @@ class ifiSDK {
                     'data' => null
                 ];
                 
-            case 'ContactService.addToGroup':
-                // Add tag to contact: params = [contactId, tagId]
+            case 'ContactService.update':
+                // Update contact: params = [contactId, data]
                 $contact_id = $params[0] ?? null;
-                $tag_id = $params[1] ?? null;
+                $update_data = $params[1] ?? [];
                 
-                if (!$contact_id || !$tag_id) {
-                    throw new ifiSDKException("Contact ID and Tag ID required for addToGroup operation");
+                if (!$contact_id) {
+                    throw new ifiSDKException("Contact ID required for update operation");
+                }
+                
+                // Map XML-RPC field names to REST API field names for update
+                $rest_data = [];
+                foreach ($update_data as $field => $value) {
+                    switch ($field) {
+                        case 'FirstName':
+                            $rest_data['given_name'] = $value;
+                            break;
+                        case 'LastName':
+                            $rest_data['family_name'] = $value;
+                            break;
+                        case 'Email':
+                            $rest_data['email_addresses'] = [['email' => $value, 'field' => 'EMAIL1']];
+                            break;
+                        case 'Phone1':
+                            $rest_data['phone_numbers'] = [['number' => $value, 'field' => 'PHONE1']];
+                            break;
+                        case 'JobTitle':
+                            $rest_data['job_title'] = $value;
+                            break;
+                        default:
+                            // For unmapped fields, try lowercase
+                            $rest_data[strtolower($field)] = $value;
+                    }
+                }
+                
+                return [
+                    'url' => $base_url . '/contacts/' . $contact_id,
+                    'method' => 'PATCH',
+                    'data' => $rest_data
+                ];
+                
+            case 'ContactService.addToGroup':
+                // Add tag to contact: params = [contactId, tagId or tagName]
+                $contact_id = $params[0] ?? null;
+                $tag_identifier = $params[1] ?? null;
+                
+                if (!$contact_id || !$tag_identifier) {
+                    throw new ifiSDKException("Contact ID and Tag ID/Name required for addToGroup operation");
+                }
+                
+                // Check if it's a numeric ID or a string name
+                if (is_numeric($tag_identifier)) {
+                    $tag_id = (int)$tag_identifier;
+                } else {
+                    // Search for tag by name
+                    $tag_id = $this->findTagIdByName($tag_identifier);
+                    if (!$tag_id) {
+                        throw new ifiSDKException("Tag not found: $tag_identifier");
+                    }
                 }
                 
                 return [
@@ -201,17 +253,45 @@ class ifiSDK {
                 ];
                 
             case 'ContactService.removeFromGroup':
-                // Remove tag from contact: params = [contactId, tagId]
+                // Remove tag from contact: params = [contactId, tagId or tagName]
                 $contact_id = $params[0] ?? null;
-                $tag_id = $params[1] ?? null;
+                $tag_identifier = $params[1] ?? null;
                 
-                if (!$contact_id || !$tag_id) {
-                    throw new ifiSDKException("Contact ID and Tag ID required for removeFromGroup operation");
+                if (!$contact_id || !$tag_identifier) {
+                    throw new ifiSDKException("Contact ID and Tag ID/Name required for removeFromGroup operation");
+                }
+                
+                // Check if it's a numeric ID or a string name
+                if (is_numeric($tag_identifier)) {
+                    $tag_id = (int)$tag_identifier;
+                } else {
+                    // Search for tag by name
+                    $tag_id = $this->findTagIdByName($tag_identifier);
+                    if (!$tag_id) {
+                        throw new ifiSDKException("Tag not found: $tag_identifier");
+                    }
                 }
                 
                 return [
                     'url' => $base_url . '/contacts/' . $contact_id . '/tags/' . $tag_id,
                     'method' => 'DELETE',
+                    'data' => null
+                ];
+                
+            case 'DataService.getTags':
+                // Get all tags: params = [limit, offset, name_filter]
+                $limit = $params[0] ?? 1000;
+                $offset = $params[1] ?? 0;
+                $name_filter = $params[2] ?? null;
+                
+                $query_params = "?limit=$limit&offset=$offset";
+                if ($name_filter) {
+                    $query_params .= "&name=" . urlencode($name_filter);
+                }
+                
+                return [
+                    'url' => $base_url . '/tags' . $query_params,
+                    'method' => 'GET',
                     'data' => null
                 ];
                 
@@ -227,7 +307,7 @@ class ifiSDK {
                 if ($table !== 'ContactGroupAssign') {
                     throw new ifiSDKException("DataService.findByField only supports ContactGroupAssign table in REST mapping");
                 }
-                
+
                 if ($field !== 'ContactId') {
                     throw new ifiSDKException("DataService.findByField only supports ContactId field searches in REST mapping");
                 }
@@ -247,12 +327,99 @@ class ifiSDK {
         }
     }
     
+    /**
+     * Find tag ID by name
+     * @param string $tag_name
+     * @return int|null
+     */
+    private function findTagIdByName($tag_name) {
+        try {
+            $this->sdk_debug_log('Searching for tag by name', ['tag_name' => $tag_name]);
+            
+            // First, check if we have a cached result
+            static $tag_cache = [];
+            $cache_key = strtolower(trim($tag_name));
+            
+            if (isset($tag_cache[$cache_key])) {
+                $this->sdk_debug_log('Found tag in cache', ['tag_name' => $tag_name, 'tag_id' => $tag_cache[$cache_key]]);
+                return $tag_cache[$cache_key];
+            }
+            
+            // Search for tags using direct REST API call
+            $curl = curl_init();
+            $headers = [
+                'Authorization: Bearer ' . $this->key,
+                'Content-Type: application/json',
+                'Accept: application/json'
+            ];
+
+            curl_setopt_array($curl, [
+                CURLOPT_URL => 'https://api.infusionsoft.com/crm/rest/v1/tags?limit=1000',
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => 30,
+                CURLOPT_HTTPHEADER => $headers,
+                CURLOPT_CUSTOMREQUEST => 'GET'
+            ]);
+
+            $response_raw = curl_exec($curl);
+            $http_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+                curl_close($curl);
+
+            if ($http_code >= 400) {
+                $this->sdk_debug_log('Tag search API error', ['http_code' => $http_code, 'response' => $response_raw]);
+                return null;
+            }
+
+            $response_data = json_decode($response_raw, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                $this->sdk_debug_log('Tag search JSON parse error', ['error' => json_last_error_msg()]);
+                return null;
+            }
+
+            // Handle paginated response - tags are in 'tags' array
+            $response = isset($response_data['tags']) ? $response_data['tags'] : $response_data;
+            
+            if (empty($response)) {
+                $this->sdk_debug_log('No tags returned from API', []);
+                return null;
+            }
+            
+            // Search through the tags array for exact name match
+            foreach ($response as $tag) {
+                if (isset($tag['name']) && strcasecmp(trim($tag['name']), trim($tag_name)) === 0) {
+                    $tag_id = (int)$tag['id'];
+                    $tag_cache[$cache_key] = $tag_id; // Cache the result
+                    $this->sdk_debug_log('Found matching tag', [
+                        'tag_name' => $tag_name, 
+                        'tag_id' => $tag_id,
+                        'exact_name' => $tag['name']
+                    ]);
+                    return $tag_id;
+                }
+            }
+            
+            $this->sdk_debug_log('Tag not found', ['tag_name' => $tag_name]);
+            return null;
+            
+        } catch (Exception $e) {
+            $this->sdk_debug_log('Error searching for tag', ['tag_name' => $tag_name, 'error' => $e->getMessage()]);
+            return null;
+        }
+    }
+    
     private function mapRestResponseToXmlRpcFormat($service, $rest_response) {
         switch ($service) {
             case 'DataService.getAppSetting':
             case 'DataService.echo':
-                // Return true for successful app setting/echo calls
-                return !empty($rest_response) ? true : false;
+                // Return true for successful connection test - checking if we got a valid response
+                // For tags endpoint, we expect either an array of tags or a paginated response
+                if (isset($rest_response['tags']) || isset($rest_response[0]) || (is_array($rest_response) && !empty($rest_response))) {
+            return true;
+                } else {
+                    // Log what we actually got for debugging
+                    $this->sdk_debug_log('Connection test unexpected response', $rest_response);
+                    return false;
+                }
                 
             case 'ContactService.load':
                 // Convert REST API response back to XML-RPC format
@@ -274,7 +441,7 @@ class ifiSDK {
                 }
                 if (isset($rest_response['email_addresses']) && !empty($rest_response['email_addresses'])) {
                     $xmlrpc_response['Email'] = $rest_response['email_addresses'][0]['email'] ?? '';
-                }
+            }
                 if (isset($rest_response['phone_numbers']) && !empty($rest_response['phone_numbers'])) {
                     $xmlrpc_response['Phone1'] = $rest_response['phone_numbers'][0]['number'] ?? '';
                 }
@@ -286,14 +453,37 @@ class ifiSDK {
                     $xmlrpc_response['PostalCode'] = $address['zip_code'] ?? '';
                     $xmlrpc_response['Country'] = $address['country_code'] ?? '';
                 }
+                if (isset($rest_response['job_title'])) {
+                    $xmlrpc_response['JobTitle'] = $rest_response['job_title'];
+                }
                 
                 return $xmlrpc_response;
+                
+            case 'ContactService.update':
+                // Return true for successful update
+                return !empty($rest_response);
                 
             case 'ContactService.addToGroup':
             case 'ContactService.removeFromGroup':
                 // Return true for successful tag assignment/removal
                 // Keap API returns empty response for successful tag operations
                 return true;
+                
+            case 'DataService.getTags':
+                // Return tags array from REST API response
+                if (empty($rest_response)) {
+                    return [];
+                }
+                
+                // Handle paginated response format
+                if (isset($rest_response['tags']) && is_array($rest_response['tags'])) {
+                    return $rest_response['tags'];
+                } elseif (is_array($rest_response) && !empty($rest_response)) {
+                    // Handle direct array response
+                    return $rest_response;
+                }
+                
+                return [];
                 
             case 'DataService.findByField':
                 // Convert contact tags response to XML-RPC format
@@ -302,21 +492,16 @@ class ifiSDK {
                 }
                 
                 $xmlrpc_response = [];
+                $contact_id = $this->getContactIdFromContext();
                 
-                // If we got tags directly from /contacts/{id}/tags endpoint
-                if (isset($rest_response['tags'])) {
-                    foreach ($rest_response['tags'] as $tag) {
-                        $xmlrpc_response[] = [
-                            'ContactId' => (int)($rest_response['contact_id'] ?? 0),
-                            'GroupId' => (int)($tag['id'] ?? 0),
-                            'ContactGroup' => (int)($tag['id'] ?? 0)
-                        ];
-                    }
-                } else {
-                    // If we got an array of tags directly
-                    $contact_id = $this->getContactIdFromContext();
+                // Debug log the raw response to understand format
+                $this->sdk_debug_log('Raw tags API response', $rest_response);
+                
+                // Handle different possible response formats from Keap tags API
+                if (is_array($rest_response)) {
+                    // If it's a direct array of tag objects
                     foreach ($rest_response as $tag) {
-                        if (isset($tag['id'])) {
+                        if (isset($tag['id']) && !empty($tag['id'])) {
                             $xmlrpc_response[] = [
                                 'ContactId' => (int)$contact_id,
                                 'GroupId' => (int)$tag['id'],
@@ -325,6 +510,8 @@ class ifiSDK {
                         }
                     }
                 }
+                
+                $this->sdk_debug_log('Converted tags response', $xmlrpc_response);
                 
                 return $xmlrpc_response;
                 
