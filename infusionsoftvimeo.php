@@ -248,44 +248,24 @@ function iv_api_key_render() {
 }
 
 function iv_video_section_callback() {
-	echo 'Configure your 5 Vimeo videos and their corresponding Infusionsoft tags:';
+	echo '<p>Configure your 5 Vimeo video IDs. Tags will be automatically created as "Watched 75% of Video 1", etc.</p>';
 }
 
 function iv_video_fields_render($args) {
 	$options = get_option('iv_settings');
 	$n = $args['video_number'];
 	?>
-	<div class="video-settings" style="margin-bottom: 20px; padding: 10px; background: #f9f9f9; border: 1px solid #ddd;">
+	<div class="video-settings" style="margin-bottom: 15px; padding: 10px; background: #f9f9f9; border: 1px solid #ddd;">
 		<h4>Video <?php echo $n; ?></h4>
 		<p>
 			<label style="display: inline-block; width: 100px;">Vimeo ID:</label>
 			<input type="text" name="iv_settings[video_<?php echo $n; ?>_id]" 
 				   value="<?php echo isset($options['video_' . $n . '_id']) ? esc_attr($options['video_' . $n . '_id']) : ''; ?>"
-				   style="width: 200px;">
+				   style="width: 200px;"
+				   placeholder="e.g. 123456789">
 		</p>
-		<p>
-			<label style="display: inline-block; width: 100px;">25% Tag:</label>
-			<input type="text" name="iv_settings[video_<?php echo $n; ?>_25_tag]" 
-				   value="<?php echo isset($options['video_' . $n . '_25_tag']) ? esc_attr($options['video_' . $n . '_25_tag']) : ''; ?>"
-				   style="width: 200px;">
-		</p>
-		<p>
-			<label style="display: inline-block; width: 100px;">50% Tag:</label>
-			<input type="text" name="iv_settings[video_<?php echo $n; ?>_50_tag]" 
-				   value="<?php echo isset($options['video_' . $n . '_50_tag']) ? esc_attr($options['video_' . $n . '_50_tag']) : ''; ?>"
-				   style="width: 200px;">
-		</p>
-		<p>
-			<label style="display: inline-block; width: 100px;">75% Tag:</label>
-			<input type="text" name="iv_settings[video_<?php echo $n; ?>_75_tag]" 
-				   value="<?php echo isset($options['video_' . $n . '_75_tag']) ? esc_attr($options['video_' . $n . '_75_tag']) : ''; ?>"
-				   style="width: 200px;">
-		</p>
-		<p>
-			<label style="display: inline-block; width: 100px;">100% Tag:</label>
-			<input type="text" name="iv_settings[video_<?php echo $n; ?>_100_tag]" 
-				   value="<?php echo isset($options['video_' . $n . '_100_tag']) ? esc_attr($options['video_' . $n . '_100_tag']) : ''; ?>"
-				   style="width: 200px;">
+		<p style="color: #666; font-size: 12px; margin-left: 100px;">
+			Tags will be: "Watched 25% of Video <?php echo $n; ?>", "Watched 50% of Video <?php echo $n; ?>", "Watched 75% of Video <?php echo $n; ?>", "Watched 100% of Video <?php echo $n; ?>"
 		</p>
 	</div>
 	<?php
@@ -398,6 +378,8 @@ function iv_options_page() {
 		</p>
 		<div id="contact-update-result" style="margin-top: 10px;"></div>
 
+
+
 		<script type="text/javascript">
 		jQuery(document).ready(function($) {
 			// Test connection
@@ -451,7 +433,7 @@ function iv_options_page() {
 				
 				button.prop('disabled', true);
 				button.text('Testing 75% Tagging...');
-				resultDiv.html('<div class="notice notice-info"><p>Testing 75% video tagging functionality...</p></div>');
+				resultDiv.html('<div class="notice notice-info"><p>Testing tag assignment...</p></div>');
 				
 				$.ajax({
 					url: ajaxurl,
@@ -462,21 +444,28 @@ function iv_options_page() {
 						test_contact_id: contactId
 					},
 					success: function(response) {
-						console.log('Raw response:', response);
+						console.log('75% tagging test response:', response);
 						
-						if (response && response.success) {
-							var debugInfo = (response.data && response.data.debug) ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
-							var message = (response.data && response.data.message) ? response.data.message : 'Success';
-							var tagId = (response.data && response.data.tag_id) ? response.data.tag_id : 'Unknown';
-							resultDiv.html('<div class="notice notice-success"><p><strong>✅ SUCCESS!</strong> ' + message + '<br>Tag ID: ' + tagId + '</p>' + debugInfo + '</div>');
+						if (typeof response === 'string') {
+							try {
+								response = JSON.parse(response);
+							} catch(e) {
+								// Response might already be JSON
+							}
+						}
+						
+						if (response.success) {
+							var debugInfo = response.data.debug ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
+							resultDiv.html('<div class="notice notice-success"><p>' + response.data.message + '</p>' + debugInfo + '</div>');
 						} else {
-							var debugInfo = (response && response.data && response.data.debug) ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
-							var message = (response && response.data && response.data.message) ? response.data.message : 'Unknown error';
-							resultDiv.html('<div class="notice notice-error"><p><strong>❌ FAILED!</strong> ' + message + '</p>' + debugInfo + '</div>');
+							var debugInfo = response.data && response.data.debug ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
+							var errorMsg = response.data ? response.data.message : (response.message || 'Unknown error');
+							resultDiv.html('<div class="notice notice-error"><p>' + errorMsg + '</p>' + debugInfo + '</div>');
 						}
 					},
 					error: function(xhr, status, error) {
-						resultDiv.html('<div class="notice notice-error"><p>AJAX Error: ' + error + '</p><pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + xhr.responseText + '</pre></div>');
+						console.error('AJAX Error:', xhr.responseText);
+						resultDiv.html('<div class="notice notice-error"><p>AJAX Error: ' + error + '</p><pre>' + xhr.responseText + '</pre></div>');
 					},
 					complete: function() {
 						button.prop('disabled', false);
@@ -485,7 +474,7 @@ function iv_options_page() {
 				});
 			});
 			
-			// Test simple contact update
+			// Test contact update
 			$('#test-contact-update').click(function(e) {
 				e.preventDefault();
 				var button = $(this);
@@ -498,8 +487,8 @@ function iv_options_page() {
 				}
 				
 				button.prop('disabled', true);
-				button.text('Testing Update...');
-				resultDiv.html('<div class="notice notice-info"><p>Testing simple contact update...</p></div>');
+				button.text('Testing Contact Update...');
+				resultDiv.html('<div class="notice notice-info"><p>Testing contact update...</p></div>');
 				
 				$.ajax({
 					url: ajaxurl,
@@ -509,46 +498,7 @@ function iv_options_page() {
 						test_contact_id: contactId
 					},
 					success: function(response) {
-						console.log('Contact update response:', response);
-						
-						if (response && response.success) {
-							var debugInfo = (response.data && response.data.debug) ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
-							var message = (response.data && response.data.message) ? response.data.message : 'Success';
-							resultDiv.html('<div class="notice notice-success"><p><strong>✅ SUCCESS!</strong> ' + message + '</p>' + debugInfo + '</div>');
-						} else {
-							var debugInfo = (response && response.data && response.data.debug) ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
-							var message = (response && response.data && response.data.message) ? response.data.message : 'Unknown error';
-							resultDiv.html('<div class="notice notice-error"><p><strong>❌ FAILED!</strong> ' + message + '</p>' + debugInfo + '</div>');
-						}
-					},
-					error: function(xhr, status, error) {
-						resultDiv.html('<div class="notice notice-error"><p>AJAX Error: ' + error + '</p><pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + xhr.responseText + '</pre></div>');
-					},
-					complete: function() {
-						button.prop('disabled', false);
-						button.text('🔧 Test Contact Update');
-					}
-				});
-			});
-			
-			// Test tag search
-			$('#test-tag-search').click(function(e) {
-				e.preventDefault();
-				var button = $(this);
-				var resultDiv = $('#tag-search-result');
-				
-				button.prop('disabled', true);
-				button.text('Searching Tags...');
-				resultDiv.html('<div class="notice notice-info"><p>Searching for tags...</p></div>');
-				
-				$.ajax({
-					url: ajaxurl,
-					type: 'POST',
-					data: {
-						action: 'test_tag_search'
-					},
-					success: function(response) {
-						console.log('Tag search response:', response);
+						console.log('Contact update test response:', response);
 						
 						if (typeof response === 'string') {
 							try {
@@ -558,33 +508,29 @@ function iv_options_page() {
 							}
 						}
 						
-						if (response.error) {
-							resultDiv.html('<div class="notice notice-error"><p><strong>❌ Error:</strong> ' + response.error + '</p></div>');
+						if (response.success) {
+							var debugInfo = response.data.debug ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
+							resultDiv.html('<div class="notice notice-success"><p>' + response.data.message + '</p>' + debugInfo + '</div>');
 						} else {
-							var html = '<div class="notice notice-success"><p><strong>✅ Tag Search Results:</strong></p>';
-							html += '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px; max-height: 400px; overflow-y: auto;">' + JSON.stringify(response, null, 2) + '</pre>';
-							html += '</div>';
-							resultDiv.html(html);
+							var debugInfo = response.data && response.data.debug ? '<pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + JSON.stringify(response.data.debug, null, 2) + '</pre>' : '';
+							var errorMsg = response.data ? response.data.message : (response.message || 'Unknown error');
+							resultDiv.html('<div class="notice notice-error"><p>' + errorMsg + '</p>' + debugInfo + '</div>');
 						}
 					},
 					error: function(xhr, status, error) {
-						resultDiv.html('<div class="notice notice-error"><p>AJAX Error: ' + error + '</p><pre style="background: #f0f0f0; padding: 10px; margin-top: 10px; font-size: 12px;">' + xhr.responseText + '</pre></div>');
+						console.error('AJAX Error:', xhr.responseText);
+						resultDiv.html('<div class="notice notice-error"><p>AJAX Error: ' + error + '</p><pre>' + xhr.responseText + '</pre></div>');
 					},
 					complete: function() {
 						button.prop('disabled', false);
-						button.text('🔍 Test Tag Search');
+						button.text('🔧 Test Contact Update');
 					}
 				});
 			});
+			
+
 		});
 		</script>
-		
-		<hr>
-		
-		<h3>🏷️ Test Tag Search</h3>
-		<p>Search for video tracking tags by name:</p>
-		<button id="test-tag-search" class="button">🔍 Test Tag Search</button>
-		<div id="tag-search-result" style="margin-top: 10px;"></div>
 	</div>
 	<?php
 }
@@ -654,13 +600,13 @@ function test_75_percent_tagging_callback() {
 			return;
 		}
 		
-		// Get the 75% tag
-		$tagid = intval($options['video_' . $video_number . '_75_tag'] ?? 0);
+		// Get the 75% tag name (automatically generated)
+		$tag_name = "Watched 75% of Video {$video_number}";
 		
-		if(empty($tagid)) {
+		if(empty($tag_name)) {
 			wp_send_json_error([
-				'message' => "No 75% tag configured for video {$video_number}",
-				'debug' => ['video_number' => $video_number, 'tagid' => $tagid]
+				'message' => "No 75% tag name generated for video {$video_number}",
+				'debug' => ['video_number' => $video_number, 'tag_name' => $tag_name]
 			]);
 			return;
 		}
@@ -679,8 +625,8 @@ function test_75_percent_tagging_callback() {
 			return;
 		}
 		
-		// Now assign the tag to the contact
-		$tag_result = $app->grpAssign($test_contact_id, $tagid);
+		// Now assign the tag to the contact using tag name
+		$tag_result = $app->grpAssign($test_contact_id, $tag_name);
 		
 		// Restore original POST data
 		$_POST = $original_post;
@@ -688,10 +634,10 @@ function test_75_percent_tagging_callback() {
 		if($tag_result === true || $tag_result === 1 || is_numeric($tag_result)) {
 			wp_send_json_success([
 				'message' => 'SUCCESS! Tag assignment API call completed. Check Infusionsoft to verify the tag was actually applied.',
-				'tag_id' => $tagid,
+				'tag_name' => $tag_name,
 				'debug' => [
 					'contact_id' => $test_contact_id,
-					'tag_id' => $tagid,
+					'tag_name' => $tag_name,
 					'tag_assignment_result' => $tag_result,
 					'result_type' => gettype($tag_result)
 				]
@@ -701,7 +647,7 @@ function test_75_percent_tagging_callback() {
 				'message' => 'FAILED: Tag assignment returned unexpected result',
 				'debug' => [
 					'contact_id' => $test_contact_id,
-					'tag_id' => $tagid,
+					'tag_name' => $tag_name,
 					'tag_assignment_result' => $tag_result,
 					'result_type' => gettype($tag_result)
 				]
@@ -795,73 +741,3 @@ function test_simple_contact_update_callback() {
 	wp_die();
 }
 
-// Test searching/creating tags by name
-add_action('wp_ajax_test_tag_search', 'test_tag_search');
-add_action('wp_ajax_nopriv_test_tag_search', 'test_tag_search');
-
-function test_tag_search() {
-    try {
-        $options = get_option('iv_settings', []);
-        $api_key = $options['api_key'] ?? '';
-        
-        if (empty($api_key)) {
-            wp_die('No API key configured');
-        }
-        
-        // Create SDK instance
-        require_once plugin_dir_path(__FILE__) . 'infusionsoft/src/ifisdk.php';
-        $ifs = new ifiSDK();
-        $ifs->cfgCon('MyTestApp', $api_key);
-        
-        $results = [];
-        
-        // Try to find existing tags first
-        try {
-            // Use dsFind to get tags from the Tag table
-            $all_tags = $ifs->dsFind('Tag', 100, 0, 'Id', '%', ['Id', 'GroupName']);
-            $results['all_tags'] = $all_tags;
-            $results['tag_count'] = count($all_tags);
-            
-            // Show just the first few tags for debugging
-            $results['sample_tags'] = array_slice($all_tags, 0, 10);
-            
-        } catch (Exception $e) {
-            $results['tag_search_error'] = $e->getMessage();
-        }
-        
-        // Test searching for our specific tag names
-        $test_tag_names = [
-            'Watched 75% of Video 1',
-            'Watched 75% of Video 2', 
-            'Watched 75% of Video 3',
-            'Watched 75% of Video 4',
-            'Watched 75% of Video 5'
-        ];
-        
-        $results['tag_search_results'] = [];
-        foreach ($test_tag_names as $tag_name) {
-            try {
-                // Test tag assignment directly using the contact from the successful test
-                $test_contact_id = 105375; // Use the contact ID that we know exists
-                $tag_result = $ifs->grpAssign($test_contact_id, $tag_name);
-                
-                $results['tag_search_results'][$tag_name] = [
-                    'assignment_attempted' => true,
-                    'assignment_result' => $tag_result,
-                    'result_type' => gettype($tag_result)
-                ];
-            } catch (Exception $e) {
-                $results['tag_search_results'][$tag_name] = [
-                    'error' => $e->getMessage()
-                ];
-            }
-        }
-        
-        echo json_encode($results, JSON_PRETTY_PRINT);
-        
-    } catch (Exception $e) {
-        echo json_encode(['error' => $e->getMessage()], JSON_PRETTY_PRINT);
-    }
-    
-    wp_die();
-}

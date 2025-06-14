@@ -58,13 +58,9 @@ jQuery(function($){
 						'percent': parseInt(percent)
 					};
 					
-					// Add specific logging for 75% requests
-					if (percent == 75 && vimeo_ajax_object.debug) {
-						console.log('🎯 75% MILESTONE: Sending critical tag request', {
-							videoId: vimeovideoid,
-							contactId: contactid,
-							percent: percent
-						});
+					// Simple 75% logging
+					if (percent == 75) {
+						console.log('🎯 75% milestone reached for video', vimeovideoid);
 					}
 					   
 					jQuery.post(vimeo_ajax_object.ajax_url, data, function(response) {
@@ -72,13 +68,9 @@ jQuery(function($){
 						if(response.tagged == true) {
 							var vidtags = document.cookie.replace(/(?:(?:^|.*;\s*)contactTags\s*\=\s*([^;]*).*$)|^.*$/, "$1");
 							
-							// Log success for 75% specifically
-							if (percent == 75 && vimeo_ajax_object.debug) {
-								console.log('✅ 75% SUCCESS: Tag assigned successfully', {
-									tagName: response.tag_name,
-									videoId: vimeovideoid,
-									debug: response.debug
-								});
+							// Simple success logging for 75%
+							if (percent == 75) {
+								console.log('✅ 75% tag assigned:', response.tag_name);
 							}
 							
 							// Use tag name for cookie tracking instead of numeric ID
@@ -99,38 +91,14 @@ jQuery(function($){
 							}
 						} else {
 							// Handle failed tagging
-							if (vimeo_ajax_object.debug) {
-								console.error('❌ TAGGING FAILED:', {
-									percent: percent,
-									videoId: vimeovideoid,
-									error: response.error || 'Unknown error',
-									debug: response.debug
-								});
-							}
-							
-							// Special attention to 75% failures
 							if (percent == 75) {
-								console.error('🚨 CRITICAL: 75% tag assignment failed!', response);
+								console.error('🚨 75% tag failed:', response.error || 'Unknown error');
 							}
 						}
 					}, 'json').fail(function(xhr, status, error) {
 						// Handle AJAX errors
-						if (vimeo_ajax_object.debug) {
-							console.error('💥 AJAX ERROR:', {
-								percent: percent,
-								videoId: vimeovideoid,
-								status: status,
-								error: error,
-								response: xhr.responseText
-							});
-						}
-						
-						// Special attention to 75% AJAX failures
 						if (percent == 75) {
-							console.error('🚨 CRITICAL AJAX ERROR: 75% request failed!', {
-								status: status,
-								error: error
-							});
+							console.error('🚨 75% AJAX ERROR:', error);
 						}
 					});
 				}
